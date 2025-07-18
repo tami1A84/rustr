@@ -1,5 +1,5 @@
-use nostr::{EventBuilder, Kind, Keys, Tag};
-use nostr_sdk::{Client, Options};
+use nostr::{EventBuilder, Filter, Kind, Keys, Tag};
+use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
 use std::time::Duration;
 use nostr::nips::nip19::ToBech32;
 use std::io::{self, Write};
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 keys
             },
             Err(_) => {
-                return Err("無効な秘密鍵の形式です。nsecまたはhex形式で入力してください。".into());
+                return Err("無効な秘密鍵の形式です。nsecまたはhex形式で入力できます。".into());
             }
         };
 
@@ -142,30 +142,140 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("秘密鍵 (nsec): {}", my_keys.secret_key()?.to_bech32()?);
     println!("------------------\n");
 
-    // --- NIP-38: ステータスイベントの公開 ---
-    println!("=== NIP-38 ステータス公開 ===");
-    
-    let client_opts = Options::new().connection_timeout(Some(Duration::from_secs(10)));
-    let client = Client::with_opts(&my_keys, client_opts);
+    // NIP-65: リレーリストを取得するためのDiscoverリレー
+    let bootstrap_relays = vec![
+        "wss://purplepag.es",    
+        "wss://directory.yabu.me", 
+    ];
 
-    client.add_relay("wss://relay.damus.io").await?;
-    client.add_relay("wss://relay.nostr.wirednet.jp").await?;
-    client.add_relay("wss://yabu.me").await?;
-    
-    println!("リレーに接続中...");
+    let client_opts = Options::new().connection_timeout(Some(Duration::from_secs(30))); // タイムアウトを30秒に延長
+    let mut client = Client::with_opts(&my_keys, client_opts.clone()); 
+
+    println!("NIP-65リレーリストを取得するためにDiscoverリレーに接続中...");
+    for relay_url in &bootstrap_relays {
+        if let Err(e) = client.add_relay(*relay_url).await {
+            println!("  Discoverリレー追加失敗: {} - エラー: {}", *relay_url, e);
+        } else {
+            println!("  Discoverリレー追加: {}", *relay_url);
+        }
+    }
     client.connect().await; 
-    println!("リレーに接続しました。");
 
-    println!("投稿するステータスメッセージを入力してください:");
+    // NIP-65イベント (Kind 10002) を購読
+    let filter = Filter::new()
+        .authors(vec![my_keys.public_key()])
+        .kind(Kind::RelayList); 
+
+    println!("NIP-65リレーリストイベントを検索中 (最大30秒)..."); // タイムアウトメッセージも30秒に更新
+    let timeout_filter_id = client.subscribe(vec![filter], Some(SubscribeAutoCloseOptions::default())).await; 
+
+    let mut nip65_relays: Vec<(String, Option<String>)> = Vec::new();
+    let mut received_nip65_event = false;
+
+    // イベントの受信を待つ (最大30秒)
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(30)) => { // タイムアウトも30秒に更新
+            println!("NIP-65イベント検索タイムアウト。");
+        }
+        _ = async {
+            let mut notifications = client.notifications();
+            while let Ok(notification) = notifications.recv().await {
+                if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
+                    if event.kind == Kind::RelayList && event.pubkey == my_keys.public_key() {
+                        println!("NIP-65リレーリストイベントを受信しました。");
+                        
+                        // 受信したNIP-65イベントのタグを全て出力するデバッグログ
+                        println!("--- 受信したNIP-65イベントの全タグ情報 ---");
+                        for tag in &event.tags {
+                            println!("  タグ: {:?}", tag);
+                        }
+                        println!("--------------------------------------");
+
+                        for tag in &event.tags { 
+                            // Tag::RelayMetadata を使用するように変更
+                            if let Tag::RelayMetadata(url, policy) = tag {
+                                let url_string = url.to_string(); // Url型からStringに変換
+                                let policy_string = match policy {
+                                    // ★★★ ここが修正された部分です ★★★
+                                    Some(nostr::RelayMetadata::Write) => Some("write".to_string()),
+                                    Some(nostr::RelayMetadata::Read) => Some("read".to_string()),
+                                    None => None, 
+                                };
+                                nip65_relays.push((url_string, policy_string));
+                            }
+                        }
+                        received_nip65_event = true;
+                        break; 
+                    }
+                }
+            }
+        } => {}
+    }
+
+    client.unsubscribe(timeout_filter_id).await; 
+    
+    // Discoverリレーとの接続を一旦切断
+    client.disconnect().await?; 
+
+    println!("--- NIP-65で受信したリレー情報 ---");
+    if nip65_relays.is_empty() {
+        println!("  有効なNIP-65リレーは受信しませんでした。");
+    } else {
+        for (url, policy) in &nip65_relays {
+            println!("  URL: {}, Policy: {:?}", url, policy);
+        }
+    }
+    println!("---------------------------------");
+
+    // --- メインのリレー接続ロジック ---
+    let mut connected_relays_count: usize; // 初期化せず型だけ指定
+
+    // NIP-65リレーリストが見つかった場合、そのリレーに接続
+    if received_nip65_event && !nip65_relays.is_empty() {
+        println!("\nNIP-65で検出されたリレーに接続中...");
+        client = Client::with_opts(&my_keys, client_opts); 
+
+        for (url, policy) in nip65_relays {
+            if policy.as_deref() == Some("write") || policy.is_none() {
+                // `add_relay` が失敗した場合のみエラーメッセージを表示
+                if let Err(e) = client.add_relay(url.as_str()).await {
+                    println!("  リレー追加失敗: {} - エラー: {}", url, e);
+                } else {
+                    println!("  リレー追加: {}", url);
+                }
+            } else {
+                println!("  リレー ({}) は書き込み権限がないためスキップしました。", url);
+            }
+        }
+        client.connect().await;
+        connected_relays_count = client.relays().await.len();
+        println!("{}つのリレーに接続しました。", connected_relays_count);
+    } else {
+        println!("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。");
+        client = Client::with_opts(&my_keys, client_opts); 
+        
+        client.add_relay("wss://relay.damus.io").await?;
+        client.add_relay("wss://relay.nostr.wirednet.jp").await?; 
+        client.add_relay("wss://yabu.me").await?; 
+        client.connect().await;
+        connected_relays_count = client.relays().await.len();
+        println!("デフォルトのリレーに接続しました。{}つのリレー。", connected_relays_count);
+    }
+
+    if connected_relays_count == 0 {
+        return Err("接続できるリレーがありません。ステータスを公開できません。".into());
+    }
+
+    println!("\n投稿するステータスメッセージを入力してください:");
     let mut status_message = String::new();
     io::stdin().read_line(&mut status_message)?;
-    let status_message = status_message.trim(); // 改行文字を削除
+    let status_message = status_message.trim(); 
 
     println!("ステータスの種類（dタグの値、例: general, music, work など。空欄で「general」になります）:");
     let mut d_tag_input = String::new();
     io::stdin().read_line(&mut d_tag_input)?;
     let d_tag_value = if d_tag_input.trim().is_empty() {
-        "general".to_string() // 空欄の場合は "general" をデフォルトにする
+        "general".to_string() 
     } else {
         d_tag_input.trim().to_string()
     };
@@ -173,7 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event = EventBuilder::new(
         Kind::ParameterizedReplaceable(30315),
         status_message,
-        vec![Tag::Identifier(d_tag_value)] // ここでdタグを設定
+        vec![Tag::Identifier(d_tag_value)] 
     ).to_event(&my_keys)?;
 
     println!("NIP-38ステータスイベントを公開中...");
