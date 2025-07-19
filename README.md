@@ -12,15 +12,9 @@ This application is a simple GUI application that allows you to post your status
 
 ## Screenshot
 
-## Login/Registration Screen
-
 ![Login and Registration](images/login_screen.png)
 
-## Home Screen (Status Post and Timeline)
-
 ![Home Screen](images/home_screen.png)
-
-## Relay and Follow Management Screen
 
 ![Relays and Follows](images/relays_screen.png)
 
@@ -72,15 +66,9 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
 
 ## スクリーンショット
 
-## ログイン/登録画面
-
 ![ログインと登録](images/login_screen.png)
 
-## ホーム画面 (ステータス投稿とタイムライン)
-
 ![ホーム画面](images/home_screen.png)
-
-## リレーとフォロー管理画面
 
 ![リレーとフォロー](images/relays_screen.png)
 
