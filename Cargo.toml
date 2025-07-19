@@ -4,16 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-nostr = "0.30"        # 最新バージョンを確認して適宜変更してください
-nostr-sdk = "0.30"     # 最新バージョンを確認して適宜変更してください
+nostr = "0.30"
+nostr-sdk = "0.30"
 tokio = { version = "1", features = ["full"] }
-chacha20poly1305 = "0.10" # 最新バージョンを確認してください
-rand = "0.8"              # ノンス生成用
-base64 = "0.21"           # base64エンコーディング用
-hex = "0.4"               # 鍵のHexエンコーディング用
-pbkdf2 = "0.12"        # 新しく追加
-hmac = "0.12"          # PBKDF2の依存
-sha2 = "0.10"          # PBKDF2の依存
-serde = { version = "1.0", features = ["derive"] } # 新しく追加
-serde_json = "1.0" # 新しく追加
-rpassword = "2.0" # 新しく追加
+chacha20poly1305 = "0.10"
+rand = "0.8"
+base64 = "0.21"
+hex = "0.4"
+pbkdf2 = "0.12"
+hmac = "0.12.1"
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rpassword = "2.0"
+thiserror = "1.0"
+dirs = "5.0"
+eframe = "0.28.0"
+egui = "0.28.0"
+env_logger = "0.10"
