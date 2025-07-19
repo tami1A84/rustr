@@ -1,10 +1,11 @@
-use nostr::{EventBuilder, Filter, Kind, Keys, Tag};
+use nostr::{EventBuilder, Filter, Kind, Keys, Tag, PublicKey};
 use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
 use std::time::Duration;
 use nostr::nips::nip19::ToBech32;
 use std::io::{self, Write};
 use std::fs;
 use std::path::Path;
+use std::collections::HashSet; // 重複を避けるためにHashSetを追加
 
 // NIP-49 (ChaCha20Poly1305) のための暗号クレート
 use chacha20poly1305::{
@@ -24,6 +25,7 @@ use sha2::Sha256;
 use serde::{Serialize, Deserialize};
 
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
+const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -166,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .authors(vec![my_keys.public_key()])
         .kind(Kind::RelayList); 
 
-    println!("NIP-65リレーリストイベントを検索中 (最大30秒)..."); // タイムアウトメッセージも30秒に更新
+    println!("NIP-65リレーリストイベントを検索中 (最大30秒)...");
     let timeout_filter_id = client.subscribe(vec![filter], Some(SubscribeAutoCloseOptions::default())).await; 
 
     let mut nip65_relays: Vec<(String, Option<String>)> = Vec::new();
@@ -174,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // イベントの受信を待つ (最大30秒)
     tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(30)) => { // タイムアウトも30秒に更新
+        _ = tokio::time::sleep(Duration::from_secs(30)) => {
             println!("NIP-65イベント検索タイムアウト。");
         }
         _ = async {
@@ -184,7 +186,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if event.kind == Kind::RelayList && event.pubkey == my_keys.public_key() {
                         println!("NIP-65リレーリストイベントを受信しました。");
                         
-                        // 受信したNIP-65イベントのタグを全て出力するデバッグログ
                         println!("--- 受信したNIP-65イベントの全タグ情報 ---");
                         for tag in &event.tags {
                             println!("  タグ: {:?}", tag);
@@ -192,11 +193,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("--------------------------------------");
 
                         for tag in &event.tags { 
-                            // Tag::RelayMetadata を使用するように変更
                             if let Tag::RelayMetadata(url, policy) = tag {
-                                let url_string = url.to_string(); // Url型からStringに変換
+                                let url_string = url.to_string(); 
                                 let policy_string = match policy {
-                                    // ★★★ ここが修正された部分です ★★★
                                     Some(nostr::RelayMetadata::Write) => Some("write".to_string()),
                                     Some(nostr::RelayMetadata::Read) => Some("read".to_string()),
                                     None => None, 
@@ -228,16 +227,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("---------------------------------");
 
     // --- メインのリレー接続ロジック ---
-    let mut connected_relays_count: usize; // 初期化せず型だけ指定
+    let mut connected_relays_count: usize;
 
     // NIP-65リレーリストが見つかった場合、そのリレーに接続
     if received_nip65_event && !nip65_relays.is_empty() {
         println!("\nNIP-65で検出されたリレーに接続中...");
-        client = Client::with_opts(&my_keys, client_opts); 
+        client = Client::with_opts(&my_keys, client_opts.clone());
 
         for (url, policy) in nip65_relays {
             if policy.as_deref() == Some("write") || policy.is_none() {
-                // `add_relay` が失敗した場合のみエラーメッセージを表示
                 if let Err(e) = client.add_relay(url.as_str()).await {
                     println!("  リレー追加失敗: {} - エラー: {}", url, e);
                 } else {
@@ -252,7 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}つのリレーに接続しました。", connected_relays_count);
     } else {
         println!("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。");
-        client = Client::with_opts(&my_keys, client_opts); 
+        client = Client::with_opts(&my_keys, client_opts.clone());
         
         client.add_relay("wss://relay.damus.io").await?;
         client.add_relay("wss://relay.nostr.wirednet.jp").await?; 
@@ -266,10 +264,115 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("接続できるリレーがありません。ステータスを公開できません。".into());
     }
 
-    println!("\n投稿するステータスメッセージを入力してください:");
-    let mut status_message = String::new();
-    io::stdin().read_line(&mut status_message)?;
-    let status_message = status_message.trim(); 
+    // --- NIP-02 コンタクトリストの取得 ---
+    println!("\nフォローリスト (NIP-02) を検索中...");
+    let nip02_filter = Filter::new()
+        .authors(vec![my_keys.public_key()])
+        .kind(Kind::ContactList)
+        .limit(1);
+
+    let nip02_filter_id = client.subscribe(vec![nip02_filter], Some(SubscribeAutoCloseOptions::default())).await;
+
+    let mut followed_pubkeys: HashSet<PublicKey> = HashSet::new();
+    let mut received_nip02_event = false;
+
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {
+            println!("フォローリスト検索タイムアウト。");
+        }
+        _ = async {
+            let mut notifications = client.notifications();
+            while let Ok(notification) = notifications.recv().await {
+                if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
+                    if event.kind == Kind::ContactList && event.pubkey == my_keys.public_key() {
+                        println!("✅ フォローリストイベントを受信しました。");
+                        for tag in &event.tags {
+                            if let Tag::PublicKey { public_key, .. } = tag { 
+                                followed_pubkeys.insert(*public_key); 
+                            }
+                        }
+                        received_nip02_event = true;
+                        break;
+                    }
+                }
+            }
+        } => {},
+    } 
+
+    client.unsubscribe(nip02_filter_id).await;
+
+    println!("--- フォローリスト ---");
+    if followed_pubkeys.is_empty() {
+        println!("  フォローしているユーザーはいません。");
+    } else {
+        println!("  {}人をフォローしています:", followed_pubkeys.len());
+        for pubkey in &followed_pubkeys {
+            println!("    - {}", pubkey.to_bech32().unwrap_or_else(|_| "無効な公開鍵".to_string()));
+        }
+    }
+    println!("--------------------");
+
+    // --- NIP-38 ステータスメッセージタイムラインの取得 ---
+    if !followed_pubkeys.is_empty() {
+        println!("\nフォローしているユーザーのNIP-38ステータスメッセージを取得中...");
+        
+        let timeline_filter = Filter::new()
+            .authors(followed_pubkeys.into_iter()) // ここが修正されました！
+            .kind(Kind::ParameterizedReplaceable(30315))
+            .limit(20);
+
+        let timeline_filter_id = client.subscribe(vec![timeline_filter], Some(SubscribeAutoCloseOptions::default())).await;
+        
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(15)) => {
+                println!("ステータスタイムライン検索タイムアウト。");
+            }
+            _ = async {
+                let mut notifications = client.notifications();
+                while let Ok(notification) = notifications.recv().await {
+                    if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
+                        if event.kind == Kind::ParameterizedReplaceable(30315) { // フォローリストでフィルタリング済み
+                            let d_tag_value = event.tags.iter().find_map(|tag| {
+                                if let Tag::Identifier(d_value) = tag {
+                                    Some(d_value.clone())
+                                } else {
+                                    None
+                                }
+                            }).unwrap_or_else(|| "unknown".to_string());
+
+                            println!("--- ステータス ---");
+                            println!("  投稿者: {}", event.pubkey.to_bech32().unwrap_or_else(|_| "無効な公開鍵".to_string()));
+                            println!("  種類(d): {}", d_tag_value);
+                            println!("  内容: {}", event.content);
+                            println!("-----------------");
+                        }
+                    }
+                }
+            } => {},
+        }
+        client.unsubscribe(timeline_filter_id).await;
+    } else {
+        println!("\nフォローしているユーザーがいないため、NIP-38ステータスタイムラインは表示されません。");
+    }
+
+
+    let status_message = loop {
+        print!("\n投稿するステータスメッセージを入力してください (現在: 0文字 / 最大: {}文字): ", MAX_STATUS_LENGTH);
+        io::stdout().flush()?; 
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed_input = input.trim();
+        
+        let current_length = trimmed_input.chars().count(); 
+
+        if current_length <= MAX_STATUS_LENGTH {
+            break trimmed_input.to_string();
+        } else {
+            println!("⚠️ 入力されたメッセージは{}文字です ({}文字オーバー)。{}文字以内にしてください。", 
+                     current_length, current_length - MAX_STATUS_LENGTH, MAX_STATUS_LENGTH);
+        }
+    };
 
     println!("ステータスの種類（dタグの値、例: general, music, work など。空欄で「general」になります）:");
     let mut d_tag_input = String::new();
