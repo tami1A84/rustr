@@ -114,25 +114,28 @@ impl NostrStatusApp {
         // --- フォント設定 ---
         let mut fonts = egui::FontDefinitions::default();
 
-        // Noto Sans JPを読み込む
+        // **LINE Seed JPを読み込む**
+        // `LINESeedJP_TTF_Rg.ttf` はダウンロードしたフォントファイル名に合わせてください。
+        // 例えば `LINESeedJP_TTF_Bd.ttf` (Bold) など、他のウェイトも追加できます。
         fonts.font_data.insert(
-            "noto_sans_jp".to_owned(),
-            egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSansJP-VariableFont_wght.ttf")).into(), // .into() を追加
+            "LINESeedJP".to_owned(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/LINESeedJP_TTF_Rg.ttf")).into(),
         );
 
-        // Proportional（可変幅）フォントファミリーにNoto Sans JPを最優先で追加
+        // **Proportional（可変幅）フォントファミリーにLINESeedJPを最優先で追加**
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "noto_sans_jp".to_owned());
+            .insert(0, "LINESeedJP".to_owned());
 
-        // Monospace（等幅）フォントファミリーにもNoto Sans JPを追加
+        // **Monospace（等幅）フォントファミリーにもLINESeedJPを追加**
+        // 必要に応じて、コーディングフォントなど別の等幅フォントを優先することも可能です。
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
             .or_default()
-            .push("noto_sans_jp".to_owned());
+            .push("LINESeedJP".to_owned());
 
         _cc.egui_ctx.set_fonts(fonts);
 
@@ -160,7 +163,7 @@ impl NostrStatusApp {
         style.visuals.widgets.inactive.bg_fill = classic_gray_background; 
 
         style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, egui::Color32::GRAY);
-        style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, classic_dark_text);
+        style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, classic_dark_text); 
         style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(230, 230, 230);
 
         style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY); 
