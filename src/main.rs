@@ -111,6 +111,31 @@ impl NostrStatusApp {
         _cc.egui_ctx.set_pixels_per_point(1.2); // UIのスケールを調整
         let mut style = (*_cc.egui_ctx.style()).clone();
         
+        // --- フォント設定 ---
+        let mut fonts = egui::FontDefinitions::default();
+
+        // Noto Sans JPを読み込む
+        fonts.font_data.insert(
+            "noto_sans_jp".to_owned(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSansJP-VariableFont_wght.ttf")).into(), // .into() を追加
+        );
+
+        // Proportional（可変幅）フォントファミリーにNoto Sans JPを最優先で追加
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "noto_sans_jp".to_owned());
+
+        // Monospace（等幅）フォントファミリーにもNoto Sans JPを追加
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("noto_sans_jp".to_owned());
+
+        _cc.egui_ctx.set_fonts(fonts);
+
         // --- クラシックなデザインのためのスタイル調整 ---
         style.visuals = egui::Visuals::light(); 
 
@@ -123,11 +148,12 @@ impl NostrStatusApp {
         style.visuals.panel_fill = classic_gray_background;
         style.visuals.override_text_color = Some(classic_dark_text);
 
-        style.visuals.widgets.noninteractive.rounding = egui::Rounding::ZERO; 
-        style.visuals.widgets.inactive.rounding = egui::Rounding::ZERO;
-        style.visuals.widgets.hovered.rounding = egui::Rounding::ZERO;
-        style.visuals.widgets.active.rounding = egui::Rounding::ZERO;
-        style.visuals.widgets.open.rounding = egui::Rounding::ZERO;
+        // 角丸設定を修正 (Rounding を CornerRadius に、rounding を corner_radius に変更)
+        style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::ZERO; 
+        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
+        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::ZERO;
+        style.visuals.widgets.active.corner_radius = egui::CornerRadius::ZERO;
+        style.visuals.widgets.open.corner_radius = egui::CornerRadius::ZERO;
         
         style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY); 
         style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, classic_dark_text); 
@@ -211,11 +237,7 @@ impl NostrStatusApp {
 
 // NIP-65とフォールバックを考慮したリレー接続関数
 async fn connect_to_relays_with_nip65(
-<<<<<<< HEAD
-    client: &Client, 
-=======
     client: &Client,
->>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
     keys: &Keys,
     discover_relays_str: &str,
     default_relays_str: &str,
@@ -789,7 +811,7 @@ impl eframe::App for NostrStatusApp {
                                     });
                                 }
                                 ui.add_space(10.0);
-                                egui::ScrollArea::vertical().id_source("timeline_scroll_area").max_height(250.0).show(ui, |ui| {
+                                egui::ScrollArea::vertical().id_salt("timeline_scroll_area").max_height(250.0).show(ui, |ui| {
                                     ui.add(egui::TextEdit::multiline(&mut app_data.status_timeline_display)
                                         .desired_width(ui.available_width())
                                         .interactive(false));
@@ -797,7 +819,7 @@ impl eframe::App for NostrStatusApp {
                             });
                         },
                         AppTab::Relays => {
-                            egui::ScrollArea::vertical().id_source("relays_tab_scroll_area").show(ui, |ui| {
+                            egui::ScrollArea::vertical().id_salt("relays_tab_scroll_area").show(ui, |ui| {
                                 // --- 現在の接続状態 ---
                                 ui.group(|ui| {
                                     ui.heading("Current Connection");
@@ -841,7 +863,7 @@ impl eframe::App for NostrStatusApp {
                                         });
                                     }
                                     ui.add_space(10.0);
-                                    egui::ScrollArea::vertical().id_source("relay_connection_scroll_area").max_height(150.0).show(ui, |ui| {
+                                    egui::ScrollArea::vertical().id_salt("relay_connection_scroll_area").max_height(150.0).show(ui, |ui| {
                                         ui.add(egui::TextEdit::multiline(&mut app_data.connected_relays_display)
                                             .desired_width(ui.available_width())
                                             .interactive(false));
@@ -858,7 +880,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.add_space(5.0);
 
                                     let mut relay_to_remove = None;
-                                    egui::ScrollArea::vertical().id_source("nip65_editor_scroll").max_height(150.0).show(ui, |ui| {
+                                    egui::ScrollArea::vertical().id_salt("nip65_editor_scroll").max_height(150.0).show(ui, |ui| {
                                         for (i, relay) in app_data.nip65_relays.iter_mut().enumerate() {
                                             ui.horizontal(|ui| {
                                                 ui.label(format!("{}.", i + 1));
@@ -884,7 +906,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.add_space(15.0);
                                     ui.label("Discover Relays (one URL per line)");
                                     ui.add_space(5.0);
-                                     egui::ScrollArea::vertical().id_source("discover_editor_scroll").max_height(80.0).show(ui, |ui| {
+                                     egui::ScrollArea::vertical().id_salt("discover_editor_scroll").max_height(80.0).show(ui, |ui| {
                                         ui.add(egui::TextEdit::multiline(&mut app_data.discover_relays_editor)
                                             .desired_width(ui.available_width()));
                                     });
@@ -892,7 +914,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.add_space(15.0);
                                     ui.label("Default Relays (fallback, one URL per line)");
                                     ui.add_space(5.0);
-                                    egui::ScrollArea::vertical().id_source("default_editor_scroll").max_height(80.0).show(ui, |ui| {
+                                    egui::ScrollArea::vertical().id_salt("default_editor_scroll").max_height(80.0).show(ui, |ui| {
                                         ui.add(egui::TextEdit::multiline(&mut app_data.default_relays_editor)
                                             .desired_width(ui.available_width()));
                                     });
@@ -922,20 +944,12 @@ impl eframe::App for NostrStatusApp {
                                                             Some(nostr::RelayMetadata::Write)
                                                         } else {
                                                             // read & write or none are represented as no policy marker
-<<<<<<< HEAD
-                                                            None 
-=======
                                                             None
->>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                         };
                                                         Some(Tag::RelayMetadata(relay.url.clone().into(), policy))
                                                     })
                                                     .collect();
-<<<<<<< HEAD
-                                                
-=======
 
->>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 if tags.is_empty() {
                                                     println!("Warning: Publishing an empty NIP-65 list.");
                                                 }
@@ -945,28 +959,17 @@ impl eframe::App for NostrStatusApp {
                                                 // Discoverリレーに接続してイベントを送信
                                                 let opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
                                                 let discover_client = Client::with_opts(&keys, opts);
-<<<<<<< HEAD
-                                                
-=======
 
->>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 for relay_url in discover_relays.lines() {
                                                     if !relay_url.trim().is_empty() {
                                                         discover_client.add_relay(relay_url.trim()).await?;
                                                     }
                                                 }
                                                 discover_client.connect().await;
-<<<<<<< HEAD
                                                 
                                                 let event_id = discover_client.send_event(event).await?;
                                                 println!("NIP-65 list published! Event ID: {}", event_id);
                                                 
-=======
-
-                                                let event_id = discover_client.send_event(event).await?;
-                                                println!("NIP-65 list published! Event ID: {}", event_id);
-
->>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 discover_client.shutdown().await?;
                                                 Ok(())
                                             }.await;
@@ -984,7 +987,7 @@ impl eframe::App for NostrStatusApp {
                             });
                         },
                         AppTab::Profile => {
-                            egui::ScrollArea::vertical().id_source("profile_tab_scroll_area").show(ui, |ui| { // プロフィールタブ全体をスクロール可能に
+                            egui::ScrollArea::vertical().id_salt("profile_tab_scroll_area").show(ui, |ui| { // プロフィールタブ全体をスクロール可能に
                                 ui.group(|ui| {
                                     ui.heading("Your Profile");
                                     ui.add_space(10.0);
@@ -1097,7 +1100,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.add_space(20.0);
                                     ui.heading("Raw NIP-01 Profile JSON");
                                     ui.add_space(5.0);
-                                    egui::ScrollArea::vertical().id_source("raw_nip01_profile_scroll_area").max_height(200.0).show(ui, |ui| {
+                                    egui::ScrollArea::vertical().id_salt("raw_nip01_profile_scroll_area").max_height(200.0).show(ui, |ui| {
                                         ui.add(egui::TextEdit::multiline(&mut app_data.nip01_profile_display)
                                             .desired_width(ui.available_width())
                                             .interactive(false)
@@ -1172,4 +1175,3 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Ok(Box::new(NostrStatusApp::new(cc)))),
     )
 }
-

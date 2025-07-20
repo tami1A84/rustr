@@ -20,6 +20,8 @@ serde_json = "1.0"
 rpassword = "2.0"
 thiserror = "1.0"
 dirs = "5.0"
-eframe = "0.28.0"
-egui = "0.28.0"
+eframe = "0.32.0" # eframeのバージョンを0.32.0に更新
+epaint = "0.32.0" # epaintもeguiと同じ0.32.0に更新
+egui = "0.32.0"   # これは既存のバージョン
 env_logger = "0.10"
+
