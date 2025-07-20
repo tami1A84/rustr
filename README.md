@@ -16,7 +16,6 @@ Logs are displayed in the terminal, not in the side panel.
 ![Login Screen](images/login_screen.png)
 ![Home Screen](images/home_screen.png)
 ![Relays Screen](images/relays_screen.png)
-![Follows Screen](images/follows_screen.png)
 ![Profile Screen](images/profile_screen.png)
 
 ## Features
@@ -71,7 +70,6 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
 ![Login Screen](images/login_screen.png)
 ![Home Screen](images/home_screen.png)
 ![Relays Screen](images/relays_screen.png)
-![Follows Screen](images/follows_screen.png)
 ![Profile Screen](images/profile_screen.png)
 
 ## 特徴
