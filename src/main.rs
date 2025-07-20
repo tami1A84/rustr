@@ -211,7 +211,11 @@ impl NostrStatusApp {
 
 // NIP-65とフォールバックを考慮したリレー接続関数
 async fn connect_to_relays_with_nip65(
+<<<<<<< HEAD
     client: &Client, 
+=======
+    client: &Client,
+>>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
     keys: &Keys,
     discover_relays_str: &str,
     default_relays_str: &str,
@@ -918,12 +922,20 @@ impl eframe::App for NostrStatusApp {
                                                             Some(nostr::RelayMetadata::Write)
                                                         } else {
                                                             // read & write or none are represented as no policy marker
+<<<<<<< HEAD
                                                             None 
+=======
+                                                            None
+>>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                         };
                                                         Some(Tag::RelayMetadata(relay.url.clone().into(), policy))
                                                     })
                                                     .collect();
+<<<<<<< HEAD
                                                 
+=======
+
+>>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 if tags.is_empty() {
                                                     println!("Warning: Publishing an empty NIP-65 list.");
                                                 }
@@ -933,17 +945,28 @@ impl eframe::App for NostrStatusApp {
                                                 // Discoverリレーに接続してイベントを送信
                                                 let opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
                                                 let discover_client = Client::with_opts(&keys, opts);
+<<<<<<< HEAD
                                                 
+=======
+
+>>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 for relay_url in discover_relays.lines() {
                                                     if !relay_url.trim().is_empty() {
                                                         discover_client.add_relay(relay_url.trim()).await?;
                                                     }
                                                 }
                                                 discover_client.connect().await;
+<<<<<<< HEAD
                                                 
                                                 let event_id = discover_client.send_event(event).await?;
                                                 println!("NIP-65 list published! Event ID: {}", event_id);
                                                 
+=======
+
+                                                let event_id = discover_client.send_event(event).await?;
+                                                println!("NIP-65 list published! Event ID: {}", event_id);
+
+>>>>>>> b6ce30079deed4e253d5a60c135811a828e6793c
                                                 discover_client.shutdown().await?;
                                                 Ok(())
                                             }.await;
