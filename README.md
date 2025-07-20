@@ -18,6 +18,8 @@ This application is a simple GUI application that allows you to post your status
 
 ![Relays and Follows](images/relays_screen.png)
 
+![Profile Screen](images/profile_screen.png)
+
 ## Features
 
 *   **Intuitive GUI:** Easy-to-use graphical interface for all operations.
