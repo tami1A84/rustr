@@ -55,6 +55,14 @@ pub struct ProfileMetadata {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
+// リレーリスト編集のための構造体
+#[derive(Debug, Clone, Default)]
+pub struct EditableRelay {
+    pub url: String,
+    pub read: bool,
+    pub write: bool,
+}
+
 
 // アプリケーションの内部状態を保持する構造体
 pub struct NostrStatusAppInternal {
@@ -76,7 +84,7 @@ pub struct NostrStatusAppInternal {
     pub editable_profile: ProfileMetadata, // 編集可能なNIP-01プロファイルデータ
     pub profile_fetch_status: String, // プロファイル取得状態メッセージ
     // リレーリスト編集用のフィールド
-    pub nip65_relays_editor: String,
+    pub nip65_relays: Vec<EditableRelay>,
     pub discover_relays_editor: String,
     pub default_relays_editor: String,
 }
@@ -175,7 +183,7 @@ impl NostrStatusApp {
             editable_profile: ProfileMetadata::default(), // 編集可能なプロファイルデータ
             profile_fetch_status: "Fetching NIP-01 profile...".to_string(), // プロファイル取得状態
             // リレーリスト編集用のフィールドを初期化
-            nip65_relays_editor: String::new(),
+            nip65_relays: Vec::new(),
             discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
             default_relays_editor: "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
         };
@@ -554,12 +562,14 @@ impl eframe::App for NostrStatusApp {
                                                 app_data.connected_relays_display = log_message[pos..].to_string();
                                             }
                                             // NIP-65エディタの内容を更新
-                                            app_data.nip65_relays_editor = fetched_nip65_relays.iter().map(|(url, policy)| {
-                                                match policy {
-                                                    Some(p) => format!("{} {}", url, p),
-                                                    None => url.clone(),
-                                                }
-                                            }).collect::<Vec<_>>().join("\n");
+                                            app_data.nip65_relays = fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                                                let (read, write) = match policy.as_deref() {
+                                                    Some("read") => (true, false),
+                                                    Some("write") => (false, true),
+                                                    _ => (true, true), // デフォルトは両方 true
+                                                };
+                                                EditableRelay { url, read, write }
+                                            }).collect();
 
                                             app_data.nip01_profile_display = profile_json_string; // 生のJSON文字列を保持
                                             app_data.editable_profile = profile_metadata; // 編集可能な構造体にロード
@@ -808,12 +818,14 @@ impl eframe::App for NostrStatusApp {
                                                         app_data_async.connected_relays_display = log_message[pos..].to_string();
                                                     }
                                                     // NIP-65エディタの内容を更新
-                                                    app_data_async.nip65_relays_editor = fetched_nip65_relays.iter().map(|(url, policy)| {
-                                                        match policy {
-                                                            Some(p) => format!("{} {}", url, p),
-                                                            None => url.clone(),
-                                                        }
-                                                    }).collect::<Vec<_>>().join("\n");
+                                                    app_data_async.nip65_relays = fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                                                        let (read, write) = match policy.as_deref() {
+                                                            Some("read") => (true, false),
+                                                            Some("write") => (false, true),
+                                                            _ => (true, true), // デフォルトは両方 true
+                                                        };
+                                                        EditableRelay { url, read, write }
+                                                    }).collect();
                                                 }
                                                 Err(e) => {
                                                     eprintln!("Failed to connect to relays: {}", e);
@@ -838,13 +850,32 @@ impl eframe::App for NostrStatusApp {
                                 ui.group(|ui| {
                                     ui.heading("Edit Relay Lists");
                                     ui.add_space(10.0);
-                                    ui.label("NIP-65 Relay List (one URL per line, add 'read' or 'write' for policy)");
+                                    ui.label("NIP-65 Relay List");
                                     ui.add_space(5.0);
+
+                                    let mut relay_to_remove = None;
                                     egui::ScrollArea::vertical().id_source("nip65_editor_scroll").max_height(150.0).show(ui, |ui| {
-                                        ui.add(egui::TextEdit::multiline(&mut app_data.nip65_relays_editor)
-                                            .desired_width(ui.available_width())
-                                            .hint_text("wss://relay.example.com\nwss://another.relay.com read\nwss://private.relay.com write"));
+                                        for (i, relay) in app_data.nip65_relays.iter_mut().enumerate() {
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("{}.", i + 1));
+                                                let text_edit = egui::TextEdit::singleline(&mut relay.url).desired_width(300.0);
+                                                ui.add(text_edit);
+                                                ui.checkbox(&mut relay.read, "Read");
+                                                ui.checkbox(&mut relay.write, "Write");
+                                                if ui.button("❌").clicked() {
+                                                    relay_to_remove = Some(i);
+                                                }
+                                            });
+                                        }
                                     });
+
+                                    if let Some(i) = relay_to_remove {
+                                        app_data.nip65_relays.remove(i);
+                                    }
+
+                                    if ui.button("➕ Add Relay").clicked() {
+                                        app_data.nip65_relays.push(EditableRelay::default());
+                                    }
 
                                     ui.add_space(15.0);
                                     ui.label("Discover Relays (one URL per line)");
@@ -865,7 +896,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.add_space(15.0);
                                     if ui.button(egui::RichText::new("💾 Save and Publish NIP-65 List").strong()).clicked() && !app_data.is_loading {
                                         let keys = app_data.my_keys.clone().unwrap();
-                                        let nip65_editor_content = app_data.nip65_relays_editor.clone();
+                                        let nip65_relays = app_data.nip65_relays.clone();
                                         let discover_relays = app_data.discover_relays_editor.clone();
 
                                         app_data.is_loading = true;
@@ -875,29 +906,21 @@ impl eframe::App for NostrStatusApp {
                                         let cloned_app_data_arc = app_data_arc_clone.clone();
                                         runtime_handle.spawn(async move {
                                             let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                                                let tags: Vec<Tag> = nip65_editor_content
-                                                    .lines()
-                                                    .filter_map(|line| {
-                                                        let parts: Vec<&str> = line.split_whitespace().collect();
-                                                        if parts.is_empty() {
+                                                let tags: Vec<Tag> = nip65_relays
+                                                    .iter()
+                                                    .filter_map(|relay| {
+                                                        if relay.url.trim().is_empty() {
                                                             return None;
                                                         }
-                                                        let url = parts[0].to_string();
-                                                        let policy = if parts.len() > 1 {
-                                                            match parts[1] {
-                                                                "read" => Some(nostr::RelayMetadata::Read),
-                                                                "write" => Some(nostr::RelayMetadata::Write),
-                                                                _ => None,
-                                                            }
+                                                        let policy = if relay.read && !relay.write {
+                                                            Some(nostr::RelayMetadata::Read)
+                                                        } else if !relay.read && relay.write {
+                                                            Some(nostr::RelayMetadata::Write)
                                                         } else {
+                                                            // read & write or none are represented as no policy marker
                                                             None
                                                         };
-                                                        // URLが空でないことを確認
-                                                        if url.is_empty() {
-                                                            None
-                                                        } else {
-                                                            Some(Tag::RelayMetadata(url.into(), policy))
-                                                        }
+                                                        Some(Tag::RelayMetadata(relay.url.clone().into(), policy))
                                                     })
                                                     .collect();
 
