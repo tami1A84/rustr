@@ -75,6 +75,10 @@ pub struct NostrStatusAppInternal {
     pub nip01_profile_display: String, // GUI表示用のNIP-01プロファイルJSON文字列
     pub editable_profile: ProfileMetadata, // 編集可能なNIP-01プロファイルデータ
     pub profile_fetch_status: String, // プロファイル取得状態メッセージ
+    // リレーリスト編集用のフィールド
+    pub nip65_relays_editor: String,
+    pub discover_relays_editor: String,
+    pub default_relays_editor: String,
 }
 
 // タブの状態を管理するenum
@@ -170,6 +174,10 @@ impl NostrStatusApp {
             nip01_profile_display: String::new(), // ここを初期化
             editable_profile: ProfileMetadata::default(), // 編集可能なプロファイルデータ
             profile_fetch_status: "Fetching NIP-01 profile...".to_string(), // プロファイル取得状態
+            // リレーリスト編集用のフィールドを初期化
+            nip65_relays_editor: String::new(),
+            discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
+            default_relays_editor: "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 
@@ -194,11 +202,13 @@ impl NostrStatusApp {
 }
 
 // NIP-65とフォールバックを考慮したリレー接続関数
-async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let bootstrap_relays = vec![
-        "wss://purplepag.es",    
-        "wss://directory.yabu.me", 
-    ];
+async fn connect_to_relays_with_nip65(
+    client: &Client,
+    keys: &Keys,
+    discover_relays_str: &str,
+    default_relays_str: &str,
+) -> Result<(String, Vec<(String, Option<String>)>), Box<dyn std::error::Error + Send + Sync>> {
+    let bootstrap_relays: Vec<String> = discover_relays_str.lines().map(|s| s.to_string()).collect();
 
     let client_opts = Options::new().connection_timeout(Some(Duration::from_secs(30)));
     let discover_client = Client::with_opts(&*keys, client_opts.clone()); // A dedicated client for discovery
@@ -206,10 +216,10 @@ async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<St
     let mut status_log = String::new();
     status_log.push_str("NIP-65リレーリストを取得するためにDiscoverリレーに接続中...\n");
     for relay_url in &bootstrap_relays {
-        if let Err(e) = discover_client.add_relay(*relay_url).await { // Add to discover_client
-            status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n", *relay_url, e));
+        if let Err(e) = discover_client.add_relay(relay_url.clone()).await { // Add to discover_client
+            status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n", relay_url, e));
         } else {
-            status_log.push_str(&format!("  Discoverリレー追加: {}\n", *relay_url));
+            status_log.push_str(&format!("  Discoverリレー追加: {}\n", relay_url));
         }
     }
     discover_client.connect().await; // Connect discover_client
@@ -274,13 +284,13 @@ async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<St
         status_log.push_str("\nNIP-65で検出されたリレーに接続中...\n");
         let _ = client.remove_all_relays().await;
 
-        for (url, policy) in nip65_relays {
+        for (url, policy) in nip65_relays.iter() { // Iterate over a reference
             if policy.as_deref() == Some("write") || policy.is_none() {
                 if let Err(e) = client.add_relay(url.as_str()).await {
                     status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n", url, e));
                 } else {
                     status_log.push_str(&format!("  リレー追加: {}\n", url));
-                    current_connected_relays.push(url);
+                    current_connected_relays.push(url.clone());
                 }
             }
         }
@@ -291,13 +301,15 @@ async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<St
         status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。\n");
         let _ = client.remove_all_relays().await;
         
-        let fallback_relays = ["wss://relay.damus.io", "wss://relay.nostr.wirednet.jp", "wss://yabu.me"];
+        let fallback_relays: Vec<String> = default_relays_str.lines().map(|s| s.to_string()).collect();
         for relay_url in fallback_relays.iter() {
-            if let Err(e) = client.add_relay(*relay_url).await {
-                status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", *relay_url, e));
-            } else {
-                status_log.push_str(&format!("  デフォルトリレー追加: {}\n", *relay_url));
-                current_connected_relays.push(relay_url.to_string());
+            if !relay_url.trim().is_empty() {
+                if let Err(e) = client.add_relay(relay_url.trim()).await {
+                    status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", relay_url, e));
+                } else {
+                    status_log.push_str(&format!("  デフォルトリレー追加: {}\n", relay_url));
+                    current_connected_relays.push(relay_url.to_string());
+                }
             }
         }
         client.connect().await;
@@ -313,7 +325,8 @@ async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<St
     tokio::time::sleep(Duration::from_secs(2)).await;
     status_log.push_str("リレー接続が安定しました。\n");
 
-    Ok(format!("{}\n\n--- 現在接続中のリレー ---\n{}", status_log, current_connected_relays.join("\n")))
+    let full_log = format!("{}\n\n--- 現在接続中のリレー ---\n{}", status_log, current_connected_relays.join("\n"));
+    Ok((full_log, nip65_relays))
 }
 
 // NIP-01 プロファイルメタデータを取得する関数
@@ -449,9 +462,18 @@ impl eframe::App for NostrStatusApp {
 
                                             // --- 2. リレー接続 (NIP-65) ---
                                             println!("Connecting to relays...");
-                                            let log_message = connect_to_relays_with_nip65(&client, &keys).await?;
+                                            let (discover_relays, default_relays) = {
+                                                let app_data = cloned_app_data_arc.lock().unwrap();
+                                                (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
+                                            };
+                                            let (log_message, fetched_nip65_relays) = connect_to_relays_with_nip65(
+                                                &client,
+                                                &keys,
+                                                &discover_relays,
+                                                &default_relays
+                                            ).await?;
                                             println!("Relay connection process finished.\n{}", log_message);
-                                            
+
                                             // --- 3. フォローリスト取得 (NIP-02) ---
                                             println!("Fetching NIP-02 contact list...");
                                             let nip02_filter = Filter::new().authors(vec![keys.public_key()]).kind(Kind::ContactList).limit(1);
@@ -531,6 +553,14 @@ impl eframe::App for NostrStatusApp {
                                             if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
                                                 app_data.connected_relays_display = log_message[pos..].to_string();
                                             }
+                                            // NIP-65エディタの内容を更新
+                                            app_data.nip65_relays_editor = fetched_nip65_relays.iter().map(|(url, policy)| {
+                                                match policy {
+                                                    Some(p) => format!("{} {}", url, p),
+                                                    None => url.clone(),
+                                                }
+                                            }).collect::<Vec<_>>().join("\n");
+
                                             app_data.nip01_profile_display = profile_json_string; // 生のJSON文字列を保持
                                             app_data.editable_profile = profile_metadata; // 編集可能な構造体にロード
                                             app_data.is_logged_in = true;
@@ -753,41 +783,157 @@ impl eframe::App for NostrStatusApp {
                             });
                         },
                         AppTab::Relays => {
-                            ui.group(|ui| {
-                                ui.heading("Relay Connection");
-                                ui.add_space(10.0);
-                                if ui.button(egui::RichText::new("🔗 Re-Connect to Relays (NIP-65)").strong()).clicked() && !app_data.is_loading {
-                                    let client_clone = app_data.nostr_client.as_ref().unwrap().clone(); 
-                                    let keys_clone = app_data.my_keys.clone().unwrap();
-                                    
-                                    app_data.is_loading = true;
-                                    app_data.should_repaint = true;
-                                    println!("Re-connecting to relays...");
-                                    
-                                    let cloned_app_data_arc = app_data_arc_clone.clone(); // async moveに渡す
-                                    runtime_handle.spawn(async move {
-                                        match connect_to_relays_with_nip65(&client_clone, &keys_clone).await {
-                                            Ok(log_message) => {
-                                                println!("Relay connection successful!\n{}", log_message);
-                                                let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
-                                                    app_data_async.connected_relays_display = log_message[pos..].to_string();
+                            egui::ScrollArea::vertical().id_source("relays_tab_scroll_area").show(ui, |ui| {
+                                // --- 現在の接続状態 ---
+                                ui.group(|ui| {
+                                    ui.heading("Current Connection");
+                                    ui.add_space(10.0);
+                                    if ui.button(egui::RichText::new("🔗 Re-Connect to Relays").strong()).clicked() && !app_data.is_loading {
+                                        let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
+                                        let keys_clone = app_data.my_keys.clone().unwrap();
+                                        let discover_relays = app_data.discover_relays_editor.clone();
+                                        let default_relays = app_data.default_relays_editor.clone();
+
+                                        app_data.is_loading = true;
+                                        app_data.should_repaint = true;
+                                        println!("Re-connecting to relays...");
+
+                                        let cloned_app_data_arc = app_data_arc_clone.clone(); // async moveに渡す
+                                        runtime_handle.spawn(async move {
+                                            match connect_to_relays_with_nip65(&client_clone, &keys_clone, &discover_relays, &default_relays).await {
+                                                Ok((log_message, fetched_nip65_relays)) => {
+                                                    println!("Relay connection successful!\n{}", log_message);
+                                                    let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                                    if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
+                                                        app_data_async.connected_relays_display = log_message[pos..].to_string();
+                                                    }
+                                                    // NIP-65エディタの内容を更新
+                                                    app_data_async.nip65_relays_editor = fetched_nip65_relays.iter().map(|(url, policy)| {
+                                                        match policy {
+                                                            Some(p) => format!("{} {}", url, p),
+                                                            None => url.clone(),
+                                                        }
+                                                    }).collect::<Vec<_>>().join("\n");
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Failed to connect to relays: {}", e);
                                                 }
                                             }
-                                            Err(e) => {
-                                                eprintln!("Failed to connect to relays: {}", e);
-                                            }
-                                        }
-                                        let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                        app_data_async.is_loading = false;
-                                        app_data_async.should_repaint = true; // 再描画をリクエスト
+                                            let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                            app_data_async.is_loading = false;
+                                            app_data_async.should_repaint = true; // 再描画をリクエスト
+                                        });
+                                    }
+                                    ui.add_space(10.0);
+                                    egui::ScrollArea::vertical().id_source("relay_connection_scroll_area").max_height(150.0).show(ui, |ui| {
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.connected_relays_display)
+                                            .desired_width(ui.available_width())
+                                            .interactive(false));
                                     });
-                                }
-                                ui.add_space(10.0);
-                                egui::ScrollArea::vertical().id_source("relay_connection_scroll_area").max_height(250.0).show(ui, |ui| {
-                                    ui.add(egui::TextEdit::multiline(&mut app_data.connected_relays_display)
-                                        .desired_width(ui.available_width())
-                                        .interactive(false));
+                                });
+
+                                ui.add_space(20.0);
+
+                                // --- リレーリスト編集 ---
+                                ui.group(|ui| {
+                                    ui.heading("Edit Relay Lists");
+                                    ui.add_space(10.0);
+                                    ui.label("NIP-65 Relay List (one URL per line, add 'read' or 'write' for policy)");
+                                    ui.add_space(5.0);
+                                    egui::ScrollArea::vertical().id_source("nip65_editor_scroll").max_height(150.0).show(ui, |ui| {
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.nip65_relays_editor)
+                                            .desired_width(ui.available_width())
+                                            .hint_text("wss://relay.example.com\nwss://another.relay.com read\nwss://private.relay.com write"));
+                                    });
+
+                                    ui.add_space(15.0);
+                                    ui.label("Discover Relays (one URL per line)");
+                                    ui.add_space(5.0);
+                                     egui::ScrollArea::vertical().id_source("discover_editor_scroll").max_height(80.0).show(ui, |ui| {
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.discover_relays_editor)
+                                            .desired_width(ui.available_width()));
+                                    });
+
+                                    ui.add_space(15.0);
+                                    ui.label("Default Relays (fallback, one URL per line)");
+                                    ui.add_space(5.0);
+                                    egui::ScrollArea::vertical().id_source("default_editor_scroll").max_height(80.0).show(ui, |ui| {
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.default_relays_editor)
+                                            .desired_width(ui.available_width()));
+                                    });
+
+                                    ui.add_space(15.0);
+                                    if ui.button(egui::RichText::new("💾 Save and Publish NIP-65 List").strong()).clicked() && !app_data.is_loading {
+                                        let keys = app_data.my_keys.clone().unwrap();
+                                        let nip65_editor_content = app_data.nip65_relays_editor.clone();
+                                        let discover_relays = app_data.discover_relays_editor.clone();
+
+                                        app_data.is_loading = true;
+                                        app_data.should_repaint = true;
+                                        println!("Publishing NIP-65 list...");
+
+                                        let cloned_app_data_arc = app_data_arc_clone.clone();
+                                        runtime_handle.spawn(async move {
+                                            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                                                let tags: Vec<Tag> = nip65_editor_content
+                                                    .lines()
+                                                    .filter_map(|line| {
+                                                        let parts: Vec<&str> = line.split_whitespace().collect();
+                                                        if parts.is_empty() {
+                                                            return None;
+                                                        }
+                                                        let url = parts[0].to_string();
+                                                        let policy = if parts.len() > 1 {
+                                                            match parts[1] {
+                                                                "read" => Some(nostr::RelayMetadata::Read),
+                                                                "write" => Some(nostr::RelayMetadata::Write),
+                                                                _ => None,
+                                                            }
+                                                        } else {
+                                                            None
+                                                        };
+                                                        // URLが空でないことを確認
+                                                        if url.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(Tag::RelayMetadata(url.into(), policy))
+                                                        }
+                                                    })
+                                                    .collect();
+
+                                                if tags.is_empty() {
+                                                    println!("Warning: Publishing an empty NIP-65 list.");
+                                                }
+
+                                                let event = EventBuilder::new(Kind::RelayList, "", tags).to_event(&keys)?;
+
+                                                // Discoverリレーに接続してイベントを送信
+                                                let opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
+                                                let discover_client = Client::with_opts(&keys, opts);
+
+                                                for relay_url in discover_relays.lines() {
+                                                    if !relay_url.trim().is_empty() {
+                                                        discover_client.add_relay(relay_url.trim()).await?;
+                                                    }
+                                                }
+                                                discover_client.connect().await;
+
+                                                let event_id = discover_client.send_event(event).await?;
+                                                println!("NIP-65 list published! Event ID: {}", event_id);
+
+                                                discover_client.shutdown().await?;
+                                                Ok(())
+                                            }.await;
+
+                                            if let Err(e) = result {
+                                                eprintln!("Failed to publish NIP-65 list: {}", e);
+                                            }
+
+                                            let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                            app_data_async.is_loading = false;
+                                            app_data_async.should_repaint = true;
+                                        });
+                                    }
                                 });
                             });
                         },
