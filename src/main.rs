@@ -24,8 +24,9 @@ use hex;
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
 
-// serde を使って設定ファイルを構造体として定義
+// serde と serde_json を使って設定ファイルとNIP-01メタデータを構造体として定義
 use serde::{Serialize, Deserialize};
+// use serde_json::json; // REMOVED: Unused import
 
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
 const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数
@@ -35,6 +36,25 @@ struct Config {
     encrypted_secret_key: String, // NIP-49フォーマットの暗号化された秘密鍵
     salt: String, // PBKDF2に使用するソルト (Base64エンコード)
 }
+
+// NIP-01 プロファイルメタデータのための構造体
+// フィールドはNIP-01の推奨に従う
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProfileMetadata {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub about: String,
+    #[serde(default)]
+    pub picture: String,
+    #[serde(default)]
+    pub nip05: String, // NIP-05 identifier
+    #[serde(default)]
+    pub lud16: String, // Lightning Address
+    #[serde(flatten)] // その他の不明なフィールドを保持
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
 
 // アプリケーションの内部状態を保持する構造体
 pub struct NostrStatusAppInternal {
@@ -52,6 +72,9 @@ pub struct NostrStatusAppInternal {
     pub is_loading: bool, // 処理中であることを示すフラグ
     pub current_tab: AppTab, // 現在選択されているタブ
     pub connected_relays_display: String, // 接続中のリレー表示用
+    pub nip01_profile_display: String, // GUI表示用のNIP-01プロファイルJSON文字列
+    pub editable_profile: ProfileMetadata, // 編集可能なNIP-01プロファイルデータ
+    pub profile_fetch_status: String, // プロファイル取得状態メッセージ
 }
 
 // タブの状態を管理するenum
@@ -144,6 +167,9 @@ impl NostrStatusApp {
             is_loading: false,
             current_tab: AppTab::Home,
             connected_relays_display: String::new(),
+            nip01_profile_display: String::new(), // ここを初期化
+            editable_profile: ProfileMetadata::default(), // 編集可能なプロファイルデータ
+            profile_fetch_status: "Fetching NIP-01 profile...".to_string(), // プロファイル取得状態
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 
@@ -290,6 +316,45 @@ async fn connect_to_relays_with_nip65(client: &Client, keys: &Keys) -> Result<St
     Ok(format!("{}\n\n--- 現在接続中のリレー ---\n{}", status_log, current_connected_relays.join("\n")))
 }
 
+// NIP-01 プロファイルメタデータを取得する関数
+async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Result<(ProfileMetadata, String), Box<dyn std::error::Error + Send + Sync>> {
+    let nip01_filter = Filter::new().authors(vec![public_key]).kind(Kind::Metadata).limit(1);
+    let nip01_filter_id = client.subscribe(vec![nip01_filter], Some(SubscribeAutoCloseOptions::default())).await;
+    
+    let mut profile_json_string = String::new();
+    let mut received_nip01 = false;
+    
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {
+            eprintln!("NIP-01 profile fetch timed out.");
+        }
+        _ = async {
+            let mut notifications = client.notifications();
+            while let Ok(notification) = notifications.recv().await {
+                if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
+                    if event.kind == Kind::Metadata && event.pubkey == public_key {
+                        println!("NIP-01 profile event received.");
+                        profile_json_string = event.content.clone();
+                        received_nip01 = true;
+                        break;
+                    }
+                }
+            }
+        } => {},
+    }
+    client.unsubscribe(nip01_filter_id).await;
+
+    if received_nip01 {
+        let profile_metadata: ProfileMetadata = serde_json::from_str(&profile_json_string)?;
+        Ok((profile_metadata, profile_json_string))
+    } else {
+        let default_metadata = ProfileMetadata::default();
+        let default_json = serde_json::to_string_pretty(&default_metadata)?;
+        Ok((default_metadata, default_json)) // プロファイルが見つからなかった場合はデフォルト値を返す
+    }
+}
+
+
 impl eframe::App for NostrStatusApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // MutexGuardをupdate関数全体のスコープで保持
@@ -414,7 +479,8 @@ impl eframe::App for NostrStatusApp {
                                             client.unsubscribe(nip02_filter_id).await;
 
                                             if !received_nip02 {
-                                                return Err("Failed to fetch contact list (timed out or not found).".into());
+                                                eprintln!("Failed to fetch contact list (timed out or not found).");
+                                                // フォローリストが取得できなくても続行
                                             }
                                             println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
@@ -449,8 +515,13 @@ impl eframe::App for NostrStatusApp {
                                                     println!("No statuses found.");
                                                 }
                                             }
+
+                                            // --- 5. NIP-01 プロフィールメタデータ取得 ---
+                                            println!("Fetching NIP-01 profile metadata...");
+                                            let (profile_metadata, profile_json_string) = fetch_nip01_profile(&client, keys.public_key()).await?;
+                                            println!("NIP-01 profile fetch finished.");
                                             
-                                            // --- 5. 最終的なUI状態の更新 ---
+                                            // --- 6. 最終的なUI状態の更新 ---
                                             let mut app_data = cloned_app_data_arc.lock().unwrap();
                                             app_data.my_keys = Some(keys);
                                             app_data.nostr_client = Some(client);
@@ -460,8 +531,11 @@ impl eframe::App for NostrStatusApp {
                                             if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
                                                 app_data.connected_relays_display = log_message[pos..].to_string();
                                             }
+                                            app_data.nip01_profile_display = profile_json_string; // 生のJSON文字列を保持
+                                            app_data.editable_profile = profile_metadata; // 編集可能な構造体にロード
                                             app_data.is_logged_in = true;
                                             app_data.current_tab = AppTab::Home;
+                                            app_data.profile_fetch_status = "NIP-01 profile loaded.".to_string();
                                             println!("Login process complete!");
 
                                             Ok(())
@@ -480,6 +554,10 @@ impl eframe::App for NostrStatusApp {
                                                      eprintln!("Failed to shutdown client: {}", e);
                                                 }
                                             }
+                                            // ログイン失敗時もNIP-01プロファイルをエラーメッセージで更新
+                                            let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
+                                            app_data_in_task.nip01_profile_display = format!("Error fetching NIP-01 profile: {}", e);
+                                            app_data_in_task.profile_fetch_status = format!("Login failed: {}", e);
                                         }
 
                                         let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
@@ -547,6 +625,7 @@ impl eframe::App for NostrStatusApp {
                                             app_data_async.is_logged_in = true;
                                             println!("Registered and logged in. Public Key: {}", keys.public_key().to_bech32().unwrap_or_default());
                                             app_data_async.current_tab = AppTab::Home;
+                                            app_data_async.profile_fetch_status = "NIP-01 profile: No profile set yet. Please edit.".to_string(); // 新規登録時のメッセージ
                                         } else {
                                             eprintln!("Failed to register new key: {}", result.unwrap_err());
                                         }
@@ -709,59 +788,165 @@ impl eframe::App for NostrStatusApp {
                                     ui.add(egui::TextEdit::multiline(&mut app_data.connected_relays_display)
                                         .desired_width(ui.available_width())
                                         .interactive(false));
-                                }); // 👈 ここが変更されました
+                                });
                             });
                         },
                         AppTab::Profile => {
-                            ui.group(|ui| {
-                                ui.heading("Your Profile");
-                                ui.add_space(10.0);
-                                
-                                ui.heading("My Public Key");
-                                ui.add_space(5.0);
-                                let public_key_bech32 = app_data.my_keys.as_ref().map_or("N/A".to_string(), |k| k.public_key().to_bech32().unwrap_or_default());
-                                ui.horizontal(|ui| {
-                                    ui.label(public_key_bech32.clone());
-                                    if ui.button("📋 Copy").clicked() {
-                                        ctx.copy_text(public_key_bech32);
-                                        println!("Public key copied to clipboard!");
-                                        app_data.should_repaint = true; // 再描画をリクエスト
-                                    }
-                                });
-                                ui.add_space(20.0);
-                                ui.label(egui::RichText::new("Future Feature: Edit your profile metadata (NIP-01) here.").strong().color(egui::Color32::from_rgb(0, 0, 150)));
-                                
-                                // --- ログアウトボタン ---
-                                ui.add_space(50.0); 
-                                ui.separator();
-                                if ui.button(egui::RichText::new("↩️ Logout").color(egui::Color32::RED)).clicked() {
-                                    // MutexGuardを解放する前に、所有権をタスクに移動させる
-                                    let client_to_shutdown = app_data.nostr_client.take(); // Option::take()で所有権を取得
+                            egui::ScrollArea::vertical().id_source("profile_tab_scroll_area").show(ui, |ui| { // プロフィールタブ全体をスクロール可能に
+                                ui.group(|ui| {
+                                    ui.heading("Your Profile");
+                                    ui.add_space(10.0);
                                     
-                                    // UIの状態をリセット
-                                    app_data.is_logged_in = false;
-                                    app_data.my_keys = None;
-                                    app_data.followed_pubkeys.clear();
-                                    app_data.followed_pubkeys_display.clear();
-                                    app_data.status_timeline_display.clear();
-                                    app_data.status_message_input.clear();
-                                    app_data.passphrase_input.clear();
-                                    app_data.confirm_passphrase_input.clear();
-                                    app_data.secret_key_input.clear();
-                                    app_data.current_tab = AppTab::Home;
-                                    app_data.should_repaint = true; // 再描画をリクエスト
-                                    println!("Logged out.");
+                                    ui.heading("My Public Key");
+                                    ui.add_space(5.0);
+                                    let public_key_bech32 = app_data.my_keys.as_ref().map_or("N/A".to_string(), |k| k.public_key().to_bech32().unwrap_or_default());
+                                    ui.horizontal(|ui| {
+                                        ui.label(public_key_bech32.clone());
+                                        if ui.button("📋 Copy").clicked() {
+                                            ctx.copy_text(public_key_bech32);
+                                            println!("Public key copied to clipboard!");
+                                            app_data.should_repaint = true; // 再描画をリクエスト
+                                        }
+                                    });
+                                    ui.add_space(20.0);
 
-                                    // Clientのシャットダウンを非同期タスクで行う
-                                    if let Some(client) = client_to_shutdown {
+                                    // NIP-01 プロファイルメタデータ表示と編集
+                                    ui.heading("NIP-01 Profile Metadata");
+                                    ui.add_space(5.0);
+
+                                    ui.label(&app_data.profile_fetch_status); // プロファイル取得状態メッセージを表示
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Name:");
+                                        ui.text_edit_singleline(&mut app_data.editable_profile.name);
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Picture URL:");
+                                        ui.text_edit_singleline(&mut app_data.editable_profile.picture);
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("NIP-05:");
+                                        ui.text_edit_singleline(&mut app_data.editable_profile.nip05);
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("LUD-16 (Lightning Address):");
+                                        ui.text_edit_singleline(&mut app_data.editable_profile.lud16);
+                                    });
+                                    ui.label("About:");
+                                    ui.add(egui::TextEdit::multiline(&mut app_data.editable_profile.about)
+                                        .desired_rows(3)
+                                        .desired_width(ui.available_width()));
+
+                                    // その他のフィールドも表示（例として最初の数個）
+                                    if !app_data.editable_profile.extra.is_empty() {
+                                        ui.label("Other Fields (read-only for now):");
+                                        for (key, value) in app_data.editable_profile.extra.iter().take(5) { // 最初の5つだけ表示
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("{}:", key));
+                                                let mut display_value = value.to_string(); // Create a temporary String for display
+                                                ui.add(egui::TextEdit::singleline(&mut display_value)
+                                                    .interactive(false)); // Make it read-only
+                                            });
+                                        }
+                                        if app_data.editable_profile.extra.len() > 5 {
+                                            ui.label("... more fields not shown ...");
+                                        }
+                                    }
+
+
+                                    ui.add_space(10.0);
+                                    if ui.button(egui::RichText::new("💾 Save Profile").strong()).clicked() && !app_data.is_loading {
+                                        let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
+                                        let keys_clone = app_data.my_keys.clone().unwrap();
+                                        let editable_profile_clone = app_data.editable_profile.clone(); // 編集中のデータをクローン
+
+                                        app_data.is_loading = true;
+                                        app_data.should_repaint = true;
+                                        println!("Saving NIP-01 profile...");
+
+                                        let cloned_app_data_arc = app_data_arc_clone.clone();
                                         runtime_handle.spawn(async move {
-                                            if let Err(e) = client.shutdown().await {
-                                                eprintln!("Failed to shutdown client on logout: {}", e);
+                                            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                                                // editable_profileから新しいJSONコンテンツを生成
+                                                let profile_content = serde_json::to_string(&editable_profile_clone)?;
+                                                
+                                                // Kind::Metadata (Kind 0) イベントを作成
+                                                let event = EventBuilder::new(Kind::Metadata, profile_content.clone(), vec![]).to_event(&keys_clone)?;
+                                                
+                                                // イベントをリレーに送信
+                                                match client_clone.send_event(event).await {
+                                                    Ok(event_id) => {
+                                                        println!("NIP-01 profile published! Event ID: {}", event_id);
+                                                        let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                                        app_data_async.profile_fetch_status = "Profile saved successfully!".to_string();
+                                                        app_data_async.nip01_profile_display = serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(&profile_content)?)?;
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("Failed to publish NIP-01 profile: {}", e);
+                                                        let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                                        app_data_async.profile_fetch_status = format!("Failed to save profile: {}", e);
+                                                    }
+                                                }
+                                                Ok(())
+                                            }.await;
+
+                                            if let Err(e) = result {
+                                                eprintln!("Error during profile save operation: {}", e);
+                                                let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                                app_data_async.profile_fetch_status = format!("Error: {}", e);
                                             }
+
+                                            let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                                            app_data_async.is_loading = false;
+                                            app_data_async.should_repaint = true; // 再描画をリクエスト
                                         });
                                     }
-                                }
-                            });
+
+                                    ui.add_space(20.0);
+                                    ui.heading("Raw NIP-01 Profile JSON");
+                                    ui.add_space(5.0);
+                                    egui::ScrollArea::vertical().id_source("raw_nip01_profile_scroll_area").max_height(200.0).show(ui, |ui| {
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.nip01_profile_display)
+                                            .desired_width(ui.available_width())
+                                            .interactive(false)
+                                            .hint_text("Raw NIP-01 Profile Metadata JSON will appear here."));
+                                    });
+                                    
+                                    // --- ログアウトボタン ---
+                                    ui.add_space(50.0); 
+                                    ui.separator();
+                                    if ui.button(egui::RichText::new("↩️ Logout").color(egui::Color32::RED)).clicked() {
+                                        // MutexGuardを解放する前に、所有権をタスクに移動させる
+                                        let client_to_shutdown = app_data.nostr_client.take(); // Option::take()で所有権を取得
+                                        
+                                        // UIの状態をリセット
+                                        app_data.is_logged_in = false;
+                                        app_data.my_keys = None;
+                                        app_data.followed_pubkeys.clear();
+                                        app_data.followed_pubkeys_display.clear();
+                                        app_data.status_timeline_display.clear();
+                                        app_data.status_message_input.clear();
+                                        app_data.passphrase_input.clear();
+                                        app_data.confirm_passphrase_input.clear();
+                                        app_data.secret_key_input.clear();
+                                        app_data.current_tab = AppTab::Home;
+                                        app_data.nip01_profile_display.clear(); // ログアウト時もクリア
+                                        app_data.editable_profile = ProfileMetadata::default(); // 編集可能プロファイルもリセット
+                                        app_data.profile_fetch_status = "Please login.".to_string(); // 状態メッセージもリセット
+                                        app_data.should_repaint = true; // 再描画をリクエスト
+                                        println!("Logged out.");
+
+                                        // Clientのシャットダウンを非同期タスクで行う
+                                        if let Some(client) = client_to_shutdown {
+                                            runtime_handle.spawn(async move {
+                                                if let Err(e) = client.shutdown().await {
+                                                    eprintln!("Failed to shutdown client on logout: {}", e);
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                            }); // プロフィールタブ全体のスクロールエリアの終わり
                         },
                     }
                 }
