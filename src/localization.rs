@@ -1,4 +1,4 @@
-use fluent::{bundle::FluentBundle, FluentResource, FluentArgs, FluentValue};
+use fluent::{bundle::FluentBundle, FluentResource, FluentArgs};
 use unic_langid::LanguageIdentifier;
 use std::fs;
 use intl_memoizer::IntlLangMemoizer;
