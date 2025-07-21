@@ -197,7 +197,4 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
         Ok((default_metadata, default_json)) // プロファイルが見つからなかった場合はデフォルト値を返す
     }
 }
-<<<<<<< HEAD
 
-=======
->>>>>>> cf864e02712db2fd1331bf3034a5a2130970c6f0

@@ -355,10 +355,7 @@ impl eframe::App for NostrStatusApp {
                                 painter.add(egui::Shape::rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(128)));
 
                                 egui::Window::new("New Post")
-<<<<<<< HEAD
                                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-=======
->>>>>>> cf864e02712db2fd1331bf3034a5a2130970c6f0
                                     .collapsible(false)
                                     .resizable(false)
                                     .show(ctx, |ui| {
@@ -908,7 +905,4 @@ impl eframe::App for NostrStatusApp {
         }
     }
 }
-<<<<<<< HEAD
 
-=======
->>>>>>> cf864e02712db2fd1331bf3034a5a2130970c6f0
