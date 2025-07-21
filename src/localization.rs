@@ -5,7 +5,6 @@ use intl_memoizer::IntlLangMemoizer;
 
 pub struct LocalizationManager {
     bundle: FluentBundle<FluentResource, IntlLangMemoizer>,
-    current_locale: LanguageIdentifier,
 }
 
 unsafe impl Send for LocalizationManager {}
@@ -15,14 +14,13 @@ impl LocalizationManager {
     pub fn new(locale_str: &str) -> Self {
         let current_locale: LanguageIdentifier = locale_str.parse().expect("Failed to parse locale");
         let resource = Self::load_resource(&current_locale);
-        let mut bundle = FluentBundle::new(vec![current_locale.clone()]);
+        let mut bundle = FluentBundle::new(vec![current_locale]);
         bundle
             .add_resource(resource)
             .expect("Failed to add resource to bundle");
 
         LocalizationManager {
             bundle,
-            current_locale,
         }
     }
 
