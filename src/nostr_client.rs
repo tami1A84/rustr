@@ -80,26 +80,22 @@ pub async fn connect_to_relays_with_nip65(
     }
     status_log.push_str("---------------------------------\n");
 
-    let connected_relays_count: usize;
     let mut current_connected_relays = Vec::new();
+    let mut connected_relays_map: std::collections::HashMap<String, nostr_sdk::RelayStatus> = std::collections::HashMap::new();
 
     if received_nip65_event && !nip65_relays.is_empty() {
         status_log.push_str("\nNIP-65で検出されたリレーに接続中...\n");
         let _ = client.remove_all_relays().await;
 
-        for (url, policy) in nip65_relays.iter() { // Iterate over a reference
+        for (url, policy) in nip65_relays.iter() {
             if policy.as_deref() == Some("write") || policy.is_none() {
                 if let Err(e) = client.add_relay(url.as_str()).await {
                     status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n", url, e));
                 } else {
                     status_log.push_str(&format!("  リレー追加: {}\n", url));
-                    current_connected_relays.push(url.clone());
                 }
             }
         }
-        client.connect().await;
-        connected_relays_count = client.relays().await.len();
-        status_log.push_str(&format!("{}つのリレーに接続しました。\n", connected_relays_count));
     } else {
         status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。\n");
         let _ = client.remove_all_relays().await;
@@ -111,22 +107,28 @@ pub async fn connect_to_relays_with_nip65(
                     status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", relay_url, e));
                 } else {
                     status_log.push_str(&format!("  デフォルトリレー追加: {}\n", relay_url));
-                    current_connected_relays.push(relay_url.to_string());
                 }
             }
         }
-        client.connect().await;
-        connected_relays_count = client.relays().await.len();
-        status_log.push_str(&format!("デフォルトのリレーに接続しました。{}つのリレー。\n", connected_relays_count));
     }
 
-    if connected_relays_count == 0 {
+    client.connect().await;
+    tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
+
+    let relays = client.relays().await;
+    if relays.is_empty() {
         return Err("接続できるリレーがありません。".into());
     }
 
-    // 接続が安定するまで少し待つ
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    status_log.push_str("リレー接続が安定しました。\n");
+    status_log.push_str(&format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len()));
+    for (url, relay) in relays.iter() {
+        let status = relay.status().await;
+        status_log.push_str(&format!("  - {}: {:?}\n", url, status));
+        current_connected_relays.push(format!("- {}: {:?}", url, status));
+        connected_relays_map.insert(url.to_string(), status);
+    }
+    status_log.push_str("---------------------------------\n");
+
 
     let full_log = format!("{}\n\n--- 現在接続中のリレー ---\n{}", status_log, current_connected_relays.join("\n"));
     Ok((full_log, nip65_relays))
