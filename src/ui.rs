@@ -288,22 +288,21 @@ impl eframe::App for NostrStatusApp {
                                                 let cipher_key = Key::from_slice(&derived_key_bytes);
                                                 let cipher = ChaCha20Poly1305::new(cipher_key);
                                                 let nip49_encoded = config.encrypted_secret_key;
-                                                let app_data = cloned_app_data_arc.lock().unwrap();
-                                                if !nip49_encoded.starts_with("#nip49:") { return Err(app_data.lm.get_message("invalid-nip49-format").into()); }
+                                                if !nip49_encoded.starts_with("#nip49:") { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-nip49-format").into()); }
                                                 let decoded_bytes = general_purpose::STANDARD.decode(&nip49_encoded[7..])?;
-                                                if decoded_bytes.len() < 12 { return Err(app_data.lm.get_message("invalid-nip49-payload").into()); }
+                                                if decoded_bytes.len() < 12 { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-nip49-payload").into()); }
                                                 let (ciphertext_and_tag, retrieved_nonce_bytes) = decoded_bytes.split_at(decoded_bytes.len() - 12);
                                                 let retrieved_nonce = Nonce::from_slice(retrieved_nonce_bytes);
-                                                let decrypted_bytes = cipher.decrypt(retrieved_nonce, ciphertext_and_tag).map_err(|_| app_data.lm.get_message("incorrect-passphrase"))?;
+                                                let decrypted_bytes = cipher.decrypt(retrieved_nonce, ciphertext_and_tag).map_err(|_| cloned_app_data_arc.lock().unwrap().lm.get_message("incorrect-passphrase"))?;
                                                 let decrypted_secret_key_hex = hex::encode(&decrypted_bytes);
                                                 Ok(Keys::parse(&decrypted_secret_key_hex)?)
                                             })()?;
 
                                             {
-                                                let app_data = cloned_app_data_arc.lock().unwrap();
+                                                let _app_data = cloned_app_data_arc.lock().unwrap();
                                                 let mut args = FluentArgs::new();
                                                 args.set("pubkey", fluent::FluentValue::from(keys.public_key().to_bech32().unwrap_or_default()));
-                                                // println!("{}", app_data.lm.get_message_with_args("key-decrypted", Some(&args)));
+                                                // println!("{}", _app_data.lm.get_message_with_args("key-decrypted", Some(&args)));
                                             }
 
                                             let client = Client::new(&keys);
@@ -353,8 +352,8 @@ impl eframe::App for NostrStatusApp {
                                                 app_data_in_task.nostr_client.take() // Option::take()で所有権を取得
                                             };
                                             if let Some(client) = client_to_shutdown {
-                                                if let Err(e) = client.shutdown().await {
-                                                     eprintln!("Failed to shutdown client: {}", e);
+                                                if let Err(_e) = client.shutdown().await {
+                                                     eprintln!("Failed to shutdown client: {}", _e);
                                                 }
                                             }
                                             // ログイン失敗時もNIP-01プロファイルをエラーメッセージで更新
@@ -399,9 +398,8 @@ impl eframe::App for NostrStatusApp {
                                         let registration_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                                             // --- 1. 鍵の登録と保存 ---
                                             let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
-                                                let app_data = cloned_app_data_arc.lock().unwrap();
                                                 let user_provided_keys = Keys::parse(&secret_key_input)?;
-                                                if user_provided_keys.secret_key().is_err() { return Err(app_data.lm.get_message("invalid-secret-key").into()); }
+                                                if user_provided_keys.secret_key().is_err() { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-secret-key").into()); }
                                                 let mut salt_bytes = [0u8; 16];
                                                 OsRng.fill(&mut salt_bytes);
                                                 let salt_base64 = general_purpose::STANDARD.encode(&salt_bytes);
@@ -413,10 +411,10 @@ impl eframe::App for NostrStatusApp {
                                                 let mut nonce_bytes: [u8; 12] = [0u8; 12];
                                                 OsRng.fill(&mut nonce_bytes);
                                                 let nonce = Nonce::from_slice(&nonce_bytes);
-                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|_e| -> Box<dyn std::error::Error + Send + Sync> {
                                                     let mut args = FluentArgs::new();
-                                                    args.set("error", fluent::FluentValue::from(format!("{:?}", e)));
-                                                    app_data.lm.get_message_with_args("nip49-encryption-error", Some(&args)).into()
+                                                    args.set("error", fluent::FluentValue::from(format!("{:?}", _e)));
+                                                    cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip49-encryption-error", Some(&args)).into()
                                                 })?;
                                                 let mut encoded_data = ciphertext_with_tag.clone();
                                                 encoded_data.extend_from_slice(nonce_bytes.as_ref());
@@ -428,10 +426,10 @@ impl eframe::App for NostrStatusApp {
                                             })()?;
 
                                             {
-                                                let app_data = cloned_app_data_arc.lock().unwrap();
+                                                let _app_data = cloned_app_data_arc.lock().unwrap();
                                                 let mut args = FluentArgs::new();
                                                 args.set("pubkey", fluent::FluentValue::from(keys.public_key().to_bech32().unwrap_or_default()));
-                                                // println!("{}", app_data.lm.get_message_with_args("registered-and-logged-in", Some(&args)));
+                                                // println!("{}", _app_data.lm.get_message_with_args("registered-and-logged-in", Some(&args)));
                                             }
 
                                             let client = Client::new(&keys);
@@ -471,7 +469,7 @@ impl eframe::App for NostrStatusApp {
                                             Ok(())
                                         }.await;
 
-                                        if let Err(e) = registration_result {
+                                        if let Err(_e) = registration_result {
                                             // eprintln!("Failed to register new key: {}", e);
                                             // エラーが発生した場合、作成された可能性のあるクライアントをシャットダウン
                                             let client_to_shutdown = {
@@ -543,7 +541,7 @@ impl eframe::App for NostrStatusApp {
                                                         let event = EventBuilder::new(Kind::ParameterizedReplaceable(30315), status_message.clone(), vec![Tag::Identifier(d_tag_value)]).to_event(&keys_clone_nip38_send);
                                                         match event {
                                                             Ok(event) => match client_clone_nip38_send.send_event(event).await {
-                                                                Ok(event_id) => {
+                                                                Ok(_event_id) => {
                                                                     // let mut args = FluentArgs::new();
                                                                     // args.set("event_id", event_id.to_string().into());
                                                                     // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("status-published", Some(&args)));
@@ -551,13 +549,13 @@ impl eframe::App for NostrStatusApp {
                                                                     data.status_message_input.clear();
                                                                     data.show_post_dialog = false;
                                                                 }
-                                                                Err(e) => {
+                                                                Err(_e) => {
                                                                     // let mut args = FluentArgs::new();
                                                                     // args.set("error", e.to_string().into());
                                                                     // eprintln!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("status-publish-failed", Some(&args)));
                                                                 }
                                                             },
-                                                            Err(e) => {
+                                                            Err(_e) => {
                                                                 // let mut args = FluentArgs::new();
                                                                 // args.set("error", e.to_string().into());
                                                                 // eprintln!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("event-creation-failed", Some(&args)));
@@ -765,7 +763,7 @@ impl eframe::App for NostrStatusApp {
                                                         EditableRelay { url, read, write }
                                                     }).collect();
                                                 }
-                                                Err(e) => {
+                                                Err(_e) => {
                                                     // eprintln!("Failed to connect to relays: {}", e);
                                                 }
                                             }
@@ -879,7 +877,7 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                                 discover_client.connect().await;
 
-                                                let event_id = discover_client.send_event(event).await?;
+                                                let _event_id = discover_client.send_event(event).await?;
                                                 // let mut args = FluentArgs::new();
                                                 // args.set("event_id", event_id.to_string().into());
                                                 // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip65-published", Some(&args)));
@@ -888,7 +886,7 @@ impl eframe::App for NostrStatusApp {
                                                 Ok(())
                                             }.await;
 
-                                            if let Err(e) = result {
+                                            if let Err(_e) = result {
                                                 // eprintln!("Failed to publish NIP-65 list: {}", e);
                                             }
 
@@ -983,7 +981,7 @@ impl eframe::App for NostrStatusApp {
 
                                                 // イベントをリレーに送信
                                                 match client_clone.send_event(event).await {
-                                                    Ok(event_id) => {
+                                                    Ok(_event_id) => {
                                                         // let mut args = FluentArgs::new();
                                                         // args.set("event_id", event_id.to_string().into());
                                                         // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip01-published", Some(&args)));
