@@ -27,4 +27,7 @@ env_logger = "0.10"
 egui_extras = { version = "0.32.0", features = ["all_loaders", "http"] }
 resvg = "0.45"
 usvg = "0.45"
+fluent = "0.16"
+unic-langid = "0.9"
+intl-memoizer = "0.5"
 

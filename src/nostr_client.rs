@@ -17,12 +17,12 @@ pub async fn connect_to_relays_with_nip65(
     let discover_client = Client::with_opts(&*keys, client_opts.clone()); // A dedicated client for discovery
 
     let mut status_log = String::new();
-    status_log.push_str("NIP-65リレーリストを取得するためにDiscoverリレーに接続中...\n");
+    status_log.push_str("NIP-65リレーリストを取得するためにDiscoverリレーに接続中...\nConnecting to Discover relays to fetch NIP-65 relay list...\n");
     for relay_url in &bootstrap_relays {
         if let Err(e) = discover_client.add_relay(relay_url.clone()).await { // Add to discover_client
-            status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n", relay_url, e));
+            status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n  Failed to add Discover relay: {} - Error: {}\n", relay_url, e, relay_url, e));
         } else {
-            status_log.push_str(&format!("  Discoverリレー追加: {}\n", relay_url));
+            status_log.push_str(&format!("  Discoverリレー追加: {}\n  Added Discover relay: {}\n", relay_url, relay_url));
         }
     }
     discover_client.connect().await; // Connect discover_client
@@ -32,7 +32,7 @@ pub async fn connect_to_relays_with_nip65(
         .authors(vec![keys.public_key()])
         .kind(Kind::RelayList);
 
-    status_log.push_str("NIP-65リレーリストイベントを検索中 (最大10秒)..\n"); // Timeout reduced
+    status_log.push_str("NIP-65リレーリストイベントを検索中 (最大10秒)..\nSearching for NIP-65 relay list event (max 10 sec)..\n"); // Timeout reduced
     let timeout_filter_id = discover_client.subscribe(vec![filter], Some(SubscribeAutoCloseOptions::default())).await;
 
     let mut nip65_relays: Vec<(String, Option<String>)> = Vec::new();
@@ -40,14 +40,14 @@ pub async fn connect_to_relays_with_nip65(
 
     tokio::select! {
         _ = tokio::time::sleep(Duration::from_secs(10)) => { // Timeout reduced
-            status_log.push_str("NIP-65イベント検索タイムアウト。\n");
+            status_log.push_str("NIP-65イベント検索タイムアウト。\nNIP-65 event search timed out.\n");
         }
         _ = async {
             let mut notifications = discover_client.notifications();
             while let Ok(notification) = notifications.recv().await {
                 if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == Kind::RelayList && event.pubkey == keys.public_key() {
-                        status_log.push_str("NIP-65リレーリストイベントを受信しました。\n");
+                        status_log.push_str("NIP-65リレーリストイベントを受信しました。\nReceived NIP-65 relay list event.\n");
                         for tag in &event.tags {
                             if let Tag::RelayMetadata(url, policy) = tag {
                                 let url_string = url.to_string();
@@ -70,9 +70,9 @@ pub async fn connect_to_relays_with_nip65(
     discover_client.unsubscribe(timeout_filter_id).await;
     discover_client.shutdown().await?;
 
-    status_log.push_str("--- NIP-65で受信したリレー情報 ---\n");
+    status_log.push_str("--- NIP-65で受信したリレー情報 / Relays received via NIP-65 ---\n");
     if nip65_relays.is_empty() {
-        status_log.push_str("  有効なNIP-65リレーは受信しませんでした。\n");
+        status_log.push_str("  有効なNIP-65リレーは受信しませんでした。\n  No valid NIP-65 relays were received.\n");
     } else {
         for (url, policy) in &nip65_relays {
             status_log.push_str(&format!("  URL: {}, Policy: {:?}\n", url, policy));
@@ -84,51 +84,51 @@ pub async fn connect_to_relays_with_nip65(
     let mut current_connected_relays = Vec::new();
 
     if received_nip65_event && !nip65_relays.is_empty() {
-        status_log.push_str("\nNIP-65で検出されたリレーに接続中...\n");
+        status_log.push_str("\nNIP-65で検出されたリレーに接続中...\nConnecting to relays found via NIP-65...\n");
         let _ = client.remove_all_relays().await;
 
         for (url, policy) in nip65_relays.iter() { // Iterate over a reference
             if policy.as_deref() == Some("write") || policy.is_none() {
                 if let Err(e) = client.add_relay(url.as_str()).await {
-                    status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n", url, e));
+                    status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n  Failed to add relay: {} - Error: {}\n", url, e, url, e));
                 } else {
-                    status_log.push_str(&format!("  リレー追加: {}\n", url));
+                    status_log.push_str(&format!("  リレー追加: {}\n  Added relay: {}\n", url, url));
                     current_connected_relays.push(url.clone());
                 }
             }
         }
         client.connect().await;
         connected_relays_count = client.relays().await.len();
-        status_log.push_str(&format!("{}つのリレーに接続しました。\n", connected_relays_count));
+        status_log.push_str(&format!("{}つのリレーに接続しました。\nConnected to {} relays.\n", connected_relays_count, connected_relays_count));
     } else {
-        status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。\n");
+        status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。\nNIP-65 relay list not found, connecting to default relays.\n");
         let _ = client.remove_all_relays().await;
 
         let fallback_relays: Vec<String> = default_relays_str.lines().map(|s| s.to_string()).collect();
         for relay_url in fallback_relays.iter() {
             if !relay_url.trim().is_empty() {
                 if let Err(e) = client.add_relay(relay_url.trim()).await {
-                    status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", relay_url, e));
+                    status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n  Failed to add default relay: {} - Error: {}\n", relay_url, e, relay_url, e));
                 } else {
-                    status_log.push_str(&format!("  デフォルトリレー追加: {}\n", relay_url));
+                    status_log.push_str(&format!("  デフォルトリレー追加: {}\n  Added default relay: {}\n", relay_url, relay_url));
                     current_connected_relays.push(relay_url.to_string());
                 }
             }
         }
         client.connect().await;
         connected_relays_count = client.relays().await.len();
-        status_log.push_str(&format!("デフォルトのリレーに接続しました。{}つのリレー。\n", connected_relays_count));
+        status_log.push_str(&format!("デフォルトのリレーに接続しました。{}つのリレー。\nConnected to default relays. {} relays.\n", connected_relays_count, connected_relays_count));
     }
 
     if connected_relays_count == 0 {
-        return Err("接続できるリレーがありません。".into());
+        return Err("接続できるリレーがありません。\nNo connectable relays found.".into());
     }
 
     // 接続が安定するまで少し待つ
     tokio::time::sleep(Duration::from_secs(2)).await;
-    status_log.push_str("リレー接続が安定しました。\n");
+    status_log.push_str("リレー接続が安定しました。\nRelay connection stabilized.\n");
 
-    let full_log = format!("{}\n\n--- 現在接続中のリレー ---\n{}", status_log, current_connected_relays.join("\n"));
+    let full_log = format!("{}\n\n--- 現在接続中のリレー / Currently Connected Relays ---\n{}", status_log, current_connected_relays.join("\n"));
     Ok((full_log, nip65_relays))
 }
 
@@ -172,7 +172,7 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
 
     tokio::select! {
         _ = tokio::time::sleep(Duration::from_secs(10)) => {
-            eprintln!("NIP-01 profile fetch timed out.");
+            eprintln!("NIP-01 プロファイルの取得がタイムアウトしました。\nNIP-01 profile fetch timed out.");
         }
         _ = async {
             let mut notifications = client.notifications();
