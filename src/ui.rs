@@ -333,14 +333,13 @@ impl eframe::App for NostrStatusApp {
                                     let cloned_app_data_arc = app_data_arc_clone.clone();
                                     runtime_handle.spawn(async move {
                                         if passphrase != confirm_passphrase {
-                                            eprintln!("Error: Passphrases do not match!");
                                             let mut current_app_data = cloned_app_data_arc.lock().unwrap();
                                             current_app_data.is_loading = false;
                                             current_app_data.should_repaint = true; // 再描画をリクエスト
                                             return;
                                         }
 
-                                        let result: Result<Keys, Box<dyn std::error::Error + Send + Sync>> = (|| {
+                                        let _result: Result<Keys, Box<dyn std::error::Error + Send + Sync>> = (|| {
                                             let user_provided_keys = Keys::parse(&secret_key_input)?;
                                             if user_provided_keys.secret_key().is_err() { return Err("入力された秘密鍵は無効です。".into()); }
                                             let mut salt_bytes = [0u8; 16];
@@ -520,23 +519,6 @@ impl eframe::App for NostrStatusApp {
                                         });
                                     });
                             }
-                            // --- テスト画像表示 ---
-                            card_frame.show(ui, |ui| {
-                                ui.label("--- Image Loader Test ---");
-                                ui.add_space(10.0);
-
-                                // JPEG形式のテスト画像URL (Picsum Photos)
-                                let test_uri_jpeg = "https://picsum.photos/id/237/100/100";
-                                ui.label("JPEG Test Image:");
-                                ui.add(egui::Image::from_uri(test_uri_jpeg).fit_to_exact_size(egui::vec2(100.0, 100.0)));
-                                ui.add_space(5.0);
-
-                                // PNG形式のテスト画像URL (Placeholder.com)
-                                let test_uri_png = "https://via.placeholder.com/100x100.png?text=PNG+Test";
-                                ui.label("PNG Test Image:");
-                                ui.add(egui::Image::from_uri(test_uri_png).fit_to_exact_size(egui::vec2(100.0, 100.0)));
-                            });
-                            ui.add_space(15.0);
                             // --- タイムライン表示 ---
                             card_frame.show(ui, |ui| {
                                 ui.heading("Timeline");
@@ -651,17 +633,12 @@ impl eframe::App for NostrStatusApp {
                                                         // --- Profile Picture ---
                                                         let avatar_size = egui::vec2(32.0, 32.0);
                                                         if !post.author_metadata.picture.is_empty() {
-                                                            println!("DEBUG: Displaying picture for pubkey {}: {}",
-                                                                     post.author_pubkey.to_bech32().unwrap_or_default(),
-                                                                     post.author_metadata.picture);
                                                             ui.add(
                                                                 egui::Image::from_uri(&post.author_metadata.picture)
                                                                     .corner_radius(avatar_size.x / 2.0)
                                                                     .fit_to_exact_size(avatar_size)
                                                             );
                                                         } else {
-                                                            println!("DEBUG: No picture URL for pubkey {}. Displaying fallback.",
-                                                                     post.author_pubkey.to_bech32().unwrap_or_default());
                                                             // フォールバックとして四角いスペースを表示
                                                             let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
                                                             ui.painter().rect_filled(rect, avatar_size.x / 2.0, ui.style().visuals.widgets.inactive.bg_fill);
@@ -878,7 +855,6 @@ impl eframe::App for NostrStatusApp {
                                         ui.label(public_key_bech32.clone());
                                         if ui.button("📋 Copy").clicked() {
                                             ctx.copy_text(public_key_bech32);
-                                            println!("Public key copied to clipboard!");
                                             app_data.should_repaint = true; // 再描画をリクエスト
                                         }
                                     });
