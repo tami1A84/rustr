@@ -1,4 +1,4 @@
-use eframe::egui;
+use eframe::{egui::{self, Margin}, epaint};
 use nostr::{EventBuilder, Filter, Kind, Keys, PublicKey, Tag};
 use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
 use std::time::Duration;
@@ -68,6 +68,7 @@ pub struct EditableRelay {
 pub struct NostrStatusAppInternal {
     pub is_logged_in: bool,
     pub status_message_input: String, // ユーザーが入力するステータス
+    pub show_post_dialog: bool, // 投稿ダイアログの表示状態
     pub secret_key_input: String, // 初回起動時の秘密鍵入力用
     pub passphrase_input: String,
     pub confirm_passphrase_input: String,
@@ -139,63 +140,77 @@ impl NostrStatusApp {
 
         _cc.egui_ctx.set_fonts(fonts);
 
-        // --- クラシックなデザインのためのスタイル調整 ---
-        style.visuals = egui::Visuals::light(); 
+        // --- モダンなmacOS風デザインのためのスタイル調整 ---
+        style.visuals = egui::Visuals::light(); // ライトモードを基準にする
 
-        let classic_gray_background = egui::Color32::from_rgb(220, 220, 220); 
-        let classic_dark_text = egui::Color32::BLACK;
-        let classic_white = egui::Color32::WHITE;
-        let classic_blue_accent = egui::Color32::from_rgb(0, 100, 180); 
+        // カラーパレット
+        let background_color = egui::Color32::from_rgb(242, 242, 247); // macOSのウィンドウ背景色に近い
+        let panel_color = egui::Color32::from_rgb(255, 255, 255); // パネルは白
+        let text_color = egui::Color32::BLACK;
+        let accent_color = egui::Color32::from_rgb(0, 110, 230); // 少し落ち着いた青
+        let separator_color = egui::Color32::from_gray(225);
 
-        style.visuals.window_fill = classic_gray_background;
-        style.visuals.panel_fill = classic_gray_background;
-        style.visuals.override_text_color = Some(classic_dark_text);
+        // 全体的なビジュアル設定
+        style.visuals.window_fill = background_color;
+        style.visuals.panel_fill = panel_color; // 中央パネルなどの背景色
+        style.visuals.override_text_color = Some(text_color);
+        style.visuals.hyperlink_color = accent_color;
+        style.visuals.faint_bg_color = background_color; // ボタンなどの背景に使われる
+        style.visuals.extreme_bg_color = egui::Color32::from_gray(230); // テキスト編集フィールドなどの背景
 
-        // 角丸設定を修正 (Rounding を CornerRadius に、rounding を corner_radius に変更)
-        style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::ZERO; 
-        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
-        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::ZERO;
-        style.visuals.widgets.active.corner_radius = egui::CornerRadius::ZERO;
-        style.visuals.widgets.open.corner_radius = egui::CornerRadius::ZERO;
-        
-        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY); 
-        style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, classic_dark_text); 
-        style.visuals.widgets.inactive.bg_fill = classic_gray_background; 
+        // ウィジェットのスタイル
+        let widget_visuals = &mut style.visuals.widgets;
 
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, egui::Color32::GRAY);
-        style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, classic_dark_text); 
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(230, 230, 230);
+        // 角丸の設定
+        let corner_radius = 6.0;
+        widget_visuals.noninteractive.corner_radius = corner_radius.into();
+        widget_visuals.inactive.corner_radius = corner_radius.into();
+        widget_visuals.hovered.corner_radius = corner_radius.into();
+        widget_visuals.active.corner_radius = corner_radius.into();
+        widget_visuals.open.corner_radius = corner_radius.into();
 
-        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY); 
-        style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, classic_dark_text);
-        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(200, 200, 200);
+        // 非インタラクティブなウィジェット（ラベルなど）
+        widget_visuals.noninteractive.bg_fill = egui::Color32::TRANSPARENT; // 背景なし
+        widget_visuals.noninteractive.bg_stroke = egui::Stroke::NONE; // 枠線なし
+        widget_visuals.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_color); // テキストの色
 
-        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(200, 200, 200); 
-        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(150, 150, 150);
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(120, 120, 120); 
-        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(100, 100, 100); 
-        style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
-        style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
-        style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
-        style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::DARK_GRAY);
+        // 非アクティブなウィジェット（ボタンなど）
+        widget_visuals.inactive.bg_fill = egui::Color32::from_gray(235);
+        widget_visuals.inactive.bg_stroke = egui::Stroke::NONE;
+        widget_visuals.inactive.fg_stroke = egui::Stroke::new(1.0, text_color);
 
-        style.visuals.extreme_bg_color = classic_white; 
-        style.visuals.selection.bg_fill = classic_blue_accent; 
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, classic_white); 
-        style.visuals.hyperlink_color = classic_blue_accent;
-        style.visuals.widgets.inactive.bg_fill = classic_gray_background; 
+        // ホバー時のウィジェット
+        widget_visuals.hovered.bg_fill = egui::Color32::from_gray(220);
+        widget_visuals.hovered.bg_stroke = egui::Stroke::NONE;
+        widget_visuals.hovered.fg_stroke = egui::Stroke::new(1.0, text_color);
 
-        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::new(14.0, egui::FontFamily::Proportional));
-        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(14.0, egui::FontFamily::Proportional));
-        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(16.0, egui::FontFamily::Proportional));
-        style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::new(13.0, egui::FontFamily::Monospace));
-        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::new(12.0, egui::FontFamily::Proportional));
+        // アクティブなウィジェット（クリック中）
+        widget_visuals.active.bg_fill = egui::Color32::from_gray(210);
+        widget_visuals.active.bg_stroke = egui::Stroke::NONE;
+        widget_visuals.active.fg_stroke = egui::Stroke::new(1.0, accent_color);
+
+        // テキスト選択
+        style.visuals.selection.bg_fill = accent_color.linear_multiply(0.3); // 少し薄いアクセントカラー
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, text_color);
+
+        // ウィンドウとパネルのストローク
+        style.visuals.window_stroke = egui::Stroke::new(1.0, separator_color);
+
+        // テキストスタイル
+        style.text_styles = [
+            (egui::TextStyle::Heading, egui::FontId::new(20.0, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Body, egui::FontId::new(13.0, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Monospace, egui::FontId::new(12.0, egui::FontFamily::Monospace)),
+            (egui::TextStyle::Button, egui::FontId::new(13.0, egui::FontFamily::Proportional)),
+            (egui::TextStyle::Small, egui::FontId::new(11.0, egui::FontFamily::Proportional)),
+        ].into();
 
         _cc.egui_ctx.set_style(style);
 
         let app_data_internal = NostrStatusAppInternal {
             is_logged_in: false,
             status_message_input: String::new(),
+            show_post_dialog: false,
             secret_key_input: String::new(),
             passphrase_input: String::new(),
             confirm_passphrase_input: String::new(),
@@ -414,15 +429,27 @@ impl eframe::App for NostrStatusApp {
         let app_data_arc_clone = self.data.clone();
         let runtime_handle = self.runtime.handle().clone();
 
-        egui::SidePanel::left("side_panel")
-            .min_width(150.0)
-            .show(ctx, |ui| {
-                ui.add_space(10.0);
-                ui.heading("Nostr Status App");
-                ui.separator();
-                ui.add_space(10.0);
+        let panel_frame = egui::Frame::default().inner_margin(Margin::same(15)).fill(ctx.style().visuals.panel_fill);
 
-                ui.vertical(|ui| {
+        let card_frame = egui::Frame {
+            inner_margin: Margin::same(12),
+            corner_radius: 8.0.into(),
+            shadow: eframe::epaint::Shadow::NONE,
+            fill: egui::Color32::from_white_alpha(250),
+            ..Default::default()
+        };
+
+        egui::SidePanel::left("side_panel")
+            .frame(panel_frame)
+            .min_width(220.0)
+            .show(ctx, |ui| {
+                ui.add_space(5.0);
+                ui.heading("Nostr Status");
+                ui.add_space(15.0);
+
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                    ui.style_mut().spacing.item_spacing.y = 12.0; // ボタン間の垂直スペース
+
                     ui.selectable_value(&mut app_data.current_tab, AppTab::Home, "🏠 Home");
                     if app_data.is_logged_in {
                         ui.selectable_value(&mut app_data.current_tab, AppTab::Relays, "📡 Relays");
@@ -431,16 +458,9 @@ impl eframe::App for NostrStatusApp {
                 });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(
-                match app_data.current_tab {
-                    AppTab::Home => "Home (Status & Timeline)",
-                    AppTab::Relays => "Relay Management",
-                    AppTab::Profile => "User Profile",
-                }
-            );
-            ui.separator();
-            ui.add_space(10.0);
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show(ctx, |ui| {
 
             ui.add_enabled_ui(!app_data.is_loading, |ui| { 
                 if !app_data.is_logged_in {
@@ -707,62 +727,75 @@ impl eframe::App for NostrStatusApp {
                 } else {
                     match app_data.current_tab {
                         AppTab::Home => {
-                            ui.group(|ui| {
-                                ui.heading("Set Status (NIP-38)");
-                                ui.add_space(10.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Characters: {}/{}", app_data.status_message_input.chars().count(), MAX_STATUS_LENGTH));
-                                    if app_data.status_message_input.chars().count() > MAX_STATUS_LENGTH {
-                                        ui.label(egui::RichText::new("Too Long!").color(egui::Color32::RED).strong());
-                                    }
-                                });
-                                ui.add(egui::TextEdit::multiline(&mut app_data.status_message_input)
-                                    .desired_rows(3)
-                                    .hint_text("What's on your mind? (max 140 chars)"));
-                                ui.add_space(10.0);
+                            if app_data.show_post_dialog {
+                                // --- 背景を暗くする ---
+                                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "dim_layer".into()));
+                                let screen_rect = ctx.screen_rect();
+                                painter.add(egui::Shape::rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(128)));
 
-                                if ui.button(egui::RichText::new("🚀 Publish Status").strong()).clicked() && !app_data.is_loading {
-                                    let status_message = app_data.status_message_input.clone();
-                                    let client_clone_nip38_send = app_data.nostr_client.as_ref().unwrap().clone(); 
-                                    let keys_clone_nip38_send = app_data.my_keys.clone().unwrap();
-                                    
-                                    app_data.is_loading = true;
-                                    app_data.should_repaint = true;
-                                    println!("Publishing NIP-38 status...");
+                                egui::Window::new("New Post")
+                                    .collapsible(false)
+                                    .resizable(false)
+                                    .show(ctx, |ui| {
+                                        ui.heading("Set Status");
+                                        ui.add_space(15.0);
+                                        ui.add(egui::TextEdit::multiline(&mut app_data.status_message_input)
+                                            .desired_rows(5)
+                                            .hint_text("What's on your mind?"));
+                                        ui.add_space(10.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(format!("{}/{}", app_data.status_message_input.chars().count(), MAX_STATUS_LENGTH));
+                                            if app_data.status_message_input.chars().count() > MAX_STATUS_LENGTH {
+                                                ui.label(egui::RichText::new("Too Long!").color(egui::Color32::RED).strong());
+                                            }
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.button("🚀 Publish").clicked() && !app_data.is_loading {
+                                                    let status_message = app_data.status_message_input.clone();
+                                                    let client_clone_nip38_send = app_data.nostr_client.as_ref().unwrap().clone();
+                                                    let keys_clone_nip38_send = app_data.my_keys.clone().unwrap();
 
-                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
-                                        eprintln!("Error: Status too long! Max {} characters.", MAX_STATUS_LENGTH);
-                                        // `app_data`はまだスコープ内なので、直接更新
-                                        app_data.is_loading = false;
-                                        app_data.should_repaint = true; // 再描画をリクエスト
-                                        return;
-                                    }
-                                    
-                                    let cloned_app_data_arc = app_data_arc_clone.clone(); // async moveに渡す
-                                    runtime_handle.spawn(async move {
-                                        let d_tag_value = "general".to_string();
-                                        let event = EventBuilder::new(Kind::ParameterizedReplaceable(30315), status_message.clone(), vec![Tag::Identifier(d_tag_value)]).to_event(&keys_clone_nip38_send);
-                                        match event {
-                                            Ok(event) => match client_clone_nip38_send.send_event(event).await {
-                                                Ok(event_id) => {
-                                                    println!("Status published! Event ID: {}", event_id);
-                                                    cloned_app_data_arc.lock().unwrap().status_message_input.clear();
+                                                    app_data.is_loading = true;
+                                                    app_data.should_repaint = true;
+                                                    println!("Publishing NIP-38 status...");
+
+                                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
+                                                        eprintln!("Error: Status too long! Max {} characters.", MAX_STATUS_LENGTH);
+                                                        app_data.is_loading = false;
+                                                        app_data.should_repaint = true;
+                                                        return;
+                                                    }
+
+                                                    let cloned_app_data_arc = app_data_arc_clone.clone();
+                                                    runtime_handle.spawn(async move {
+                                                        let d_tag_value = "general".to_string();
+                                                        let event = EventBuilder::new(Kind::ParameterizedReplaceable(30315), status_message.clone(), vec![Tag::Identifier(d_tag_value)]).to_event(&keys_clone_nip38_send);
+                                                        match event {
+                                                            Ok(event) => match client_clone_nip38_send.send_event(event).await {
+                                                                Ok(event_id) => {
+                                                                    println!("Status published! Event ID: {}", event_id);
+                                                                    let mut data = cloned_app_data_arc.lock().unwrap();
+                                                                    data.status_message_input.clear();
+                                                                    data.show_post_dialog = false;
+                                                                }
+                                                                Err(e) => eprintln!("Failed to publish status: {}", e),
+                                                            },
+                                                            Err(e) => eprintln!("Failed to create event: {}", e),
+                                                        }
+                                                        let mut data = cloned_app_data_arc.lock().unwrap();
+                                                        data.is_loading = false;
+                                                        data.should_repaint = true;
+                                                    });
                                                 }
-                                                Err(e) => eprintln!("Failed to publish status: {}", e),
-                                            },
-                                            Err(e) => eprintln!("Failed to create event: {}", e),
-                                        }
-                                        let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                        app_data_async.is_loading = false;
-                                        app_data_async.should_repaint = true; // 再描画をリクエスト
+                                                if ui.button("Cancel").clicked() {
+                                                    app_data.show_post_dialog = false;
+                                                }
+                                            });
+                                        });
                                     });
-                                }
-                            });
-
-                            ui.add_space(20.0);
-                            ui.group(|ui| {
-                                ui.heading("Status Timeline");
-                                ui.add_space(10.0);
+                            }
+                            card_frame.show(ui, |ui| {
+                                ui.heading("Timeline");
+                                ui.add_space(15.0);
                                 if ui.button(egui::RichText::new("🔄 Fetch Latest Statuses").strong()).clicked() && !app_data.is_loading {
                                     let client_clone_nip38_fetch = app_data.nostr_client.as_ref().unwrap().clone(); 
                                     let followed_pubkeys_clone_nip38_fetch = app_data.followed_pubkeys.clone();
@@ -820,11 +853,21 @@ impl eframe::App for NostrStatusApp {
                                         .interactive(false));
                                 });
                             });
+
+                            // --- フローティングアクションボタン (FAB) ---
+                            egui::Area::new("fab_area".into())
+                                .order(egui::Order::Foreground)
+                                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -20.0))
+                                .show(ctx, |ui| {
+                                    if ui.button(egui::RichText::new("➕").size(24.0)).clicked() {
+                                        app_data.show_post_dialog = true;
+                                    }
+                                });
                         },
                         AppTab::Relays => {
                             egui::ScrollArea::vertical().id_salt("relays_tab_scroll_area").show(ui, |ui| {
                                 // --- 現在の接続状態 ---
-                                ui.group(|ui| {
+                                card_frame.show(ui, |ui| {
                                     ui.heading("Current Connection");
                                     ui.add_space(10.0);
                                     if ui.button(egui::RichText::new("🔗 Re-Connect to Relays").strong()).clicked() && !app_data.is_loading {
@@ -873,12 +916,12 @@ impl eframe::App for NostrStatusApp {
                                     });
                                 });
 
-                                ui.add_space(20.0);
+                                ui.add_space(15.0);
 
                                 // --- リレーリスト編集 ---
-                                ui.group(|ui| {
+                                card_frame.show(ui, |ui| {
                                     ui.heading("Edit Relay Lists");
-                                    ui.add_space(10.0);
+                                    ui.add_space(15.0);
                                     ui.label("NIP-65 Relay List");
                                     ui.add_space(5.0);
 
@@ -991,7 +1034,7 @@ impl eframe::App for NostrStatusApp {
                         },
                         AppTab::Profile => {
                             egui::ScrollArea::vertical().id_salt("profile_tab_scroll_area").show(ui, |ui| { // プロフィールタブ全体をスクロール可能に
-                                ui.group(|ui| {
+                                card_frame.show(ui, |ui| {
                                     ui.heading("Your Profile");
                                     ui.add_space(10.0);
                                     
@@ -1006,11 +1049,11 @@ impl eframe::App for NostrStatusApp {
                                             app_data.should_repaint = true; // 再描画をリクエスト
                                         }
                                     });
-                                    ui.add_space(20.0);
+                                    ui.add_space(15.0);
 
                                     // NIP-01 プロファイルメタデータ表示と編集
                                     ui.heading("NIP-01 Profile Metadata");
-                                    ui.add_space(5.0);
+                                    ui.add_space(10.0);
 
                                     ui.label(&app_data.profile_fetch_status); // プロファイル取得状態メッセージを表示
 
