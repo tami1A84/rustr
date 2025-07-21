@@ -142,17 +142,19 @@ pub async fn fetch_relays_for_followed_users(
     }
 
     let filter = Filter::new().authors(pubkeys).kind(Kind::RelayList);
-    println!("Fetching kind:10002 for {} pubkeys from discover relays.", filter.authors.as_ref().map_or(0, |a| a.len()));
 
     let events = discover_client.get_events_of(vec![filter], Some(Duration::from_secs(10))).await?;
-    println!("Received {} kind:10002 events.", events.len());
 
     let mut relay_urls = std::collections::HashSet::new();
     for event in events {
         for tag in &event.tags {
-            if let Tag::RelayMetadata(url, _policy) = tag {
-                // policyを無視してすべてのリレーURLを追加
-                relay_urls.insert(url.to_string());
+            if let Tag::RelayMetadata(url, policy) = tag {
+                match policy {
+                    Some(nostr::RelayMetadata::Write) | None => {
+                        relay_urls.insert(url.to_string());
+                    }
+                    Some(nostr::RelayMetadata::Read) => {}
+                }
             }
         }
     }
@@ -177,7 +179,6 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
             while let Ok(notification) = notifications.recv().await {
                 if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == Kind::Metadata && event.pubkey == public_key {
-                        println!("NIP-01 profile event received.");
                         profile_json_string = event.content.clone();
                         received_nip01 = true;
                         break;
@@ -197,4 +198,5 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
         Ok((default_metadata, default_json)) // プロファイルが見つからなかった場合はデフォルト値を返す
     }
 }
+
 
