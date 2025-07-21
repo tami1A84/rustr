@@ -233,6 +233,9 @@ impl NostrStatusApp {
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 
+        // egui_extrasの画像ローダーをインストール
+        egui_extras::install_image_loaders(&_cc.egui_ctx);
+
         // アプリケーション起動時に設定ファイルをチェック
         let data_clone = data.clone();
         let runtime_handle = runtime.handle().clone();
@@ -254,7 +257,7 @@ impl NostrStatusApp {
 }
 
 fn main() -> eframe::Result<()> {
-    // env_logger::init(); // 必要に応じて有効化
+    env_logger::init(); // 必要に応じて有効化
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 700.0]),

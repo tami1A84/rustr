@@ -71,44 +71,63 @@ async fn fetch_initial_data(
     }
     println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
-    // --- 3. タイムライン取得 (NIP-38) ---
+    // --- 3. タイムライン取得 ---
     let mut timeline_posts = Vec::new();
     if !followed_pubkeys.is_empty() {
-        println!("Fetching NIP-38 status timeline...");
-        let timeline_filter = Filter::new().authors(followed_pubkeys.iter().cloned()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
-        let status_events = client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await.unwrap_or_default();
+        // 3a. フォローユーザーのNIP-65(kind:10002)を取得
+        let temp_discover_client = Client::new(keys);
+        for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
+            temp_discover_client.add_relay(relay_url.trim()).await?;
+        }
+        temp_discover_client.connect().await;
+        let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
+        let write_relay_urls = fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
+        temp_discover_client.shutdown().await?;
 
-        if !status_events.is_empty() {
-            let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
-            let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-            let metadata_events = client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await.unwrap_or_default();
-            let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
-            for event in metadata_events {
-                if event.kind == Kind::Metadata {
+        if !write_relay_urls.is_empty() {
+            // 3b. 取得したwriteリレーで新しい一時クライアントを作成
+            let temp_fetch_client = Client::new(keys);
+            for url in &write_relay_urls {
+                temp_fetch_client.add_relay(url.clone()).await?;
+            }
+            temp_fetch_client.connect().await;
+
+            // 3c. フォローユーザーのステータス(kind:30315)を取得
+            let timeline_filter = Filter::new().authors(followed_pubkeys.clone()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
+            let status_events = temp_fetch_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
+            println!("Fetched {} statuses from followed users' write relays.", status_events.len());
+
+            if !status_events.is_empty() {
+                // 3d. ステータス投稿者のプロフィール(kind:0)を取得
+                let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
+                let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
+                let metadata_events = temp_fetch_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+                let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+                for event in metadata_events {
                     if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
                         profiles.insert(event.pubkey, metadata);
                     }
                 }
+
+                // 3e. ステータスとメタデータをマージ
+                for event in status_events {
+                    timeline_posts.push(TimelinePost {
+                        author_pubkey: event.pubkey,
+                        author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                        content: event.content.clone(),
+                        created_at: event.created_at,
+                    });
+                }
+                timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
             }
-            for event in status_events {
-                timeline_posts.push(TimelinePost {
-                    author_pubkey: event.pubkey,
-                    author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
-                    content: event.content.clone(),
-                    created_at: event.created_at,
-                });
-            }
-            timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-            println!("Fetched {} statuses.", timeline_posts.len());
-        } else {
-            println!("No NIP-38 statuses found for followed users.");
+            temp_fetch_client.shutdown().await?;
         }
     }
 
-    // --- 4. NIP-01 プロフィールメタデータ取得 ---
-    println!("Fetching NIP-01 profile metadata...");
+    // --- 4. 自身のNIP-01 プロフィールメタデータ取得 ---
+    println!("Fetching NIP-01 profile metadata for self...");
     let (profile_metadata, profile_json_string) = fetch_nip01_profile(client, keys.public_key()).await?;
-    println!("NIP-01 profile fetch finished.");
+    println!("NIP-01 profile fetch for self finished.");
 
     Ok(InitialData {
         followed_pubkeys,
@@ -501,11 +520,28 @@ impl eframe::App for NostrStatusApp {
                                         });
                                     });
                             }
+                            // --- テスト画像表示 ---
+                            card_frame.show(ui, |ui| {
+                                ui.label("--- Image Loader Test ---");
+                                ui.add_space(10.0);
+
+                                // JPEG形式のテスト画像URL (Picsum Photos)
+                                let test_uri_jpeg = "https://picsum.photos/id/237/100/100";
+                                ui.label("JPEG Test Image:");
+                                ui.add(egui::Image::from_uri(test_uri_jpeg).fit_to_exact_size(egui::vec2(100.0, 100.0)));
+                                ui.add_space(5.0);
+
+                                // PNG形式のテスト画像URL (Placeholder.com)
+                                let test_uri_png = "https://via.placeholder.com/100x100.png?text=PNG+Test";
+                                ui.label("PNG Test Image:");
+                                ui.add(egui::Image::from_uri(test_uri_png).fit_to_exact_size(egui::vec2(100.0, 100.0)));
+                            });
+                            ui.add_space(15.0);
+                            // --- タイムライン表示 ---
                             card_frame.show(ui, |ui| {
                                 ui.heading("Timeline");
                                 ui.add_space(15.0);
                                 if ui.button(egui::RichText::new("🔄 Fetch Latest Statuses").strong()).clicked() && !app_data.is_loading {
-                                    let client = app_data.nostr_client.as_ref().unwrap().clone();
                                     let followed_pubkeys = app_data.followed_pubkeys.clone();
                                     let discover_relays = app_data.discover_relays_editor.clone();
                                     let my_keys = app_data.my_keys.clone().unwrap();
@@ -522,44 +558,40 @@ impl eframe::App for NostrStatusApp {
                                                 return Ok(Vec::new());
                                             }
 
-                                            // 1. Discoverリレーに接続するための専用クライアントを準備
-                                            let discover_opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
-                                            let discover_client = Client::with_opts(&my_keys, discover_opts);
-                                            for relay_url in discover_relays.lines() {
-                                                if !relay_url.trim().is_empty() {
-                                                    discover_client.add_relay(relay_url.trim()).await?;
-                                                }
+                                            // 1. DiscoverリレーでフォローユーザーのNIP-65(kind:10002)を取得
+                                            let discover_client = Client::new(&my_keys);
+                                            for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
+                                                discover_client.add_relay(relay_url.trim()).await?;
                                             }
                                             discover_client.connect().await;
-                                            tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
-
-                                            // 2. フォローしているユーザーのkind:10002を取得
                                             let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
-                                            let temp_relay_urls = fetch_relays_for_followed_users(&discover_client, followed_pubkeys_vec.clone()).await?;
-                                            println!("Found {} temporary relays from followed users' NIP-65 lists.", temp_relay_urls.len());
-                                            discover_client.shutdown().await?; // Discoverクライアントはここで役目終了
+                                            let write_relay_urls = fetch_relays_for_followed_users(&discover_client, followed_pubkeys_vec).await?;
+                                            discover_client.shutdown().await?;
 
-                                            // 3. 一時的なリレーをメインクライアントに追加
-                                            for url in &temp_relay_urls {
-                                                println!("Adding temporary relay: {}", url);
-                                                client.add_relay(url.clone()).await?;
+                                            if write_relay_urls.is_empty() {
+                                                println!("No writeable relays found for followed users.");
+                                                return Ok(Vec::new());
                                             }
-                                            client.connect().await; // 新しいリレーに接続
-                                            tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
 
-                                            // 4. ステータスイベント(kind:30315)を取得
+                                            // 2. 取得したwriteリレーで新しい一時クライアントを作成
+                                            let temp_client = Client::new(&my_keys);
+                                            for url in &write_relay_urls {
+                                                temp_client.add_relay(url.clone()).await?;
+                                            }
+                                            temp_client.connect().await;
+
+                                            // 3. フォローユーザーのステータス(kind:30315)を取得
                                             let timeline_filter = Filter::new().authors(followed_pubkeys).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
-                                            println!("Fetching kind:30315 statuses from all connected relays.");
-                                            let status_events = client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
+                                            let status_events = temp_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
+                                            println!("Fetched {} statuses from followed users' write relays.", status_events.len());
 
                                             let mut timeline_posts = Vec::new();
                                             if !status_events.is_empty() {
+                                                // 4. ステータス投稿者のプロフィール(kind:0)を取得
                                                 let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
                                                 println!("Fetching metadata for {} authors.", author_pubkeys.len());
-
-                                                // 5. 投稿者のNIP-01メタデータを取得
-                                                let metadata_filter = Filter::new().authors(author_pubkeys).kind(Kind::Metadata);
-                                                let metadata_events = client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+                                                let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
+                                                let metadata_events = temp_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
 
                                                 let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
                                                 for event in metadata_events {
@@ -567,8 +599,9 @@ impl eframe::App for NostrStatusApp {
                                                         profiles.insert(event.pubkey, metadata);
                                                     }
                                                 }
+                                                println!("Fetched {} profiles.", profiles.len());
 
-                                                // 6. ステータスとメタデータをマージ
+                                                // 5. ステータスとメタデータをマージ
                                                 for event in status_events {
                                                     timeline_posts.push(TimelinePost {
                                                         author_pubkey: event.pubkey,
@@ -579,11 +612,8 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                             }
 
-                                            // 7. 一時的なリレーを削除
-                                            for url in temp_relay_urls {
-                                                println!("Removing temporary relay: {}", url);
-                                                client.remove_relay(url).await?;
-                                            }
+                                            // 6. 一時クライアントをシャットダウン
+                                            temp_client.shutdown().await?;
 
                                             Ok(timeline_posts)
                                         }.await;
@@ -618,8 +648,26 @@ impl eframe::App for NostrStatusApp {
                                             for post in &app_data.timeline_posts {
                                                 card_frame.show(ui, |ui| {
                                                     ui.horizontal(|ui| {
-                                                        // Placeholder for profile picture
-                                                        ui.add_space(32.0);
+                                                        // --- Profile Picture ---
+                                                        let avatar_size = egui::vec2(32.0, 32.0);
+                                                        if !post.author_metadata.picture.is_empty() {
+                                                            println!("DEBUG: Displaying picture for pubkey {}: {}",
+                                                                     post.author_pubkey.to_bech32().unwrap_or_default(),
+                                                                     post.author_metadata.picture);
+                                                            ui.add(
+                                                                egui::Image::from_uri(&post.author_metadata.picture)
+                                                                    .corner_radius(avatar_size.x / 2.0)
+                                                                    .fit_to_exact_size(avatar_size)
+                                                            );
+                                                        } else {
+                                                            println!("DEBUG: No picture URL for pubkey {}. Displaying fallback.",
+                                                                     post.author_pubkey.to_bech32().unwrap_or_default());
+                                                            // フォールバックとして四角いスペースを表示
+                                                            let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                                                            ui.painter().rect_filled(rect, avatar_size.x / 2.0, ui.style().visuals.widgets.inactive.bg_fill);
+                                                        }
+
+                                                        ui.add_space(8.0); // アイコンと名前の間のスペース
 
                                                         let display_name = if !post.author_metadata.name.is_empty() {
                                                             post.author_metadata.name.clone()

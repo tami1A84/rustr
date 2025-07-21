@@ -150,9 +150,16 @@ pub async fn fetch_relays_for_followed_users(
     let mut relay_urls = std::collections::HashSet::new();
     for event in events {
         for tag in &event.tags {
-            if let Tag::RelayMetadata(url, _policy) = tag {
-                // policyを無視してすべてのリレーURLを追加
-                relay_urls.insert(url.to_string());
+            if let Tag::RelayMetadata(url, policy) = tag {
+                match policy {
+                    Some(nostr::RelayMetadata::Write) | None => {
+                        println!("DEBUG: Adding write-capable relay for user {}: {}", event.pubkey.to_string(), url.to_string());
+                        relay_urls.insert(url.to_string());
+                    }
+                    Some(nostr::RelayMetadata::Read) => {
+                        println!("DEBUG: Ignoring read-only relay for user {}: {}", event.pubkey.to_string(), url.to_string());
+                    }
+                }
             }
         }
     }
