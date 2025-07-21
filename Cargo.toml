@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 nostr = "0.30"
 nostr-sdk = "0.30"
-nostr-types = "0.4.0" # ここを "0.4.0" に修正してください
+nostr-types = "0.4.0"
 tokio = { version = "1", features = ["full"] }
 chacha20poly1305 = "0.10"
 rand = "0.8"
@@ -20,8 +20,7 @@ serde_json = "1.0"
 rpassword = "2.0"
 thiserror = "1.0"
 dirs = "5.0"
-eframe = "0.32.0" # eframeのバージョンを0.32.0に更新
-epaint = "0.32.0" # epaintもeguiと同じ0.32.0に更新
-egui = "0.32.0"   # これは既存のバージョン
+eframe = { version = "0.32.0", features = ["persistence"] } # "testing" を削除
+epaint = "0.32.0"
+egui = "0.32.0"
 env_logger = "0.10"
-
