@@ -199,3 +199,4 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
     }
 }
 
+
