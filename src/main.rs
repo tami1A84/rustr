@@ -265,7 +265,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "Nostr NIP-38 Status Sender",
+        "N",
         options,
         Box::new(|cc| Ok(Box::new(NostrStatusApp::new(cc)))),
     )

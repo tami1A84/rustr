@@ -3,6 +3,35 @@
 version = 4
 
 [[package]]
+name = "N"
+version = "0.1.0"
+dependencies = [
+ "base64 0.21.7",
+ "chacha20poly1305",
+ "dirs",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "env_logger",
+ "epaint",
+ "hex",
+ "hmac",
+ "nostr",
+ "nostr-sdk",
+ "nostr-types",
+ "pbkdf2",
+ "rand 0.8.5",
+ "resvg",
+ "rpassword 2.1.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "usvg",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2727,35 +2756,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "nostr-nip38-status-sender"
-version = "0.1.0"
-dependencies = [
- "base64 0.21.7",
- "chacha20poly1305",
- "dirs",
- "eframe",
- "egui",
- "egui_extras",
- "env_logger",
- "epaint",
- "hex",
- "hmac",
- "nostr",
- "nostr-sdk",
- "nostr-types",
- "pbkdf2",
- "rand 0.8.5",
- "resvg",
- "rpassword 2.1.0",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 1.0.69",
- "tokio",
- "usvg",
 ]
 
 [[package]]

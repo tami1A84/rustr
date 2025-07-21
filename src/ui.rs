@@ -180,7 +180,7 @@ impl eframe::App for NostrStatusApp {
             .min_width(220.0)
             .show(ctx, |ui| {
                 ui.add_space(5.0);
-                ui.heading("Nostr Status");
+                ui.heading("N");
                 ui.add_space(15.0);
 
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
