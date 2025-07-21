@@ -132,6 +132,34 @@ pub async fn connect_to_relays_with_nip65(
     Ok((full_log, nip65_relays))
 }
 
+// フォローしているユーザーのリレーリスト(kind:10002)を取得する関数
+pub async fn fetch_relays_for_followed_users(
+    discover_client: &Client,
+    pubkeys: Vec<PublicKey>,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    if pubkeys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = Filter::new().authors(pubkeys).kind(Kind::RelayList);
+    println!("Fetching kind:10002 for {} pubkeys from discover relays.", filter.authors.as_ref().map_or(0, |a| a.len()));
+
+    let events = discover_client.get_events_of(vec![filter], Some(Duration::from_secs(10))).await?;
+    println!("Received {} kind:10002 events.", events.len());
+
+    let mut relay_urls = std::collections::HashSet::new();
+    for event in events {
+        for tag in &event.tags {
+            if let Tag::RelayMetadata(url, _policy) = tag {
+                // policyを無視してすべてのリレーURLを追加
+                relay_urls.insert(url.to_string());
+            }
+        }
+    }
+
+    Ok(relay_urls.into_iter().collect())
+}
+
 // NIP-01 プロファイルメタデータを取得する関数
 pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Result<(ProfileMetadata, String), Box<dyn std::error::Error + Send + Sync>> {
     let nip01_filter = Filter::new().authors(vec![public_key]).kind(Kind::Metadata).limit(1);

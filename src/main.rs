@@ -17,7 +17,7 @@ use tokio::runtime::Runtime;
 // serde と serde_json を使って設定ファイルとNIP-01メタデータを構造体として定義
 use serde::{Serialize, Deserialize};
 
-use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile};
+use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users};
 
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
 const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数

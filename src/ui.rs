@@ -10,7 +10,7 @@ use std::collections::{HashSet, HashMap};
 use crate::{
     NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay,
     CONFIG_FILE, MAX_STATUS_LENGTH,
-    connect_to_relays_with_nip65, fetch_nip01_profile
+    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users
 };
 
 // NIP-49 (ChaCha20Poly1305) のための暗号クレート
@@ -418,67 +418,106 @@ impl eframe::App for NostrStatusApp {
                                 ui.heading("Timeline");
                                 ui.add_space(15.0);
                                 if ui.button(egui::RichText::new("🔄 Fetch Latest Statuses").strong()).clicked() && !app_data.is_loading {
-                                    let client_clone_nip38_fetch = app_data.nostr_client.as_ref().unwrap().clone();
-                                    let followed_pubkeys_clone_nip38_fetch = app_data.followed_pubkeys.clone();
+                                    let client = app_data.nostr_client.as_ref().unwrap().clone();
+                                    let followed_pubkeys = app_data.followed_pubkeys.clone();
+                                    let discover_relays = app_data.discover_relays_editor.clone();
+                                    let my_keys = app_data.my_keys.clone().unwrap();
 
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
-                                    println!("Fetching NIP-38 status timeline...");
+                                    println!("Fetching latest statuses...");
 
-                                    let cloned_app_data_arc = app_data_arc_clone.clone(); // async moveに渡す
+                                    let cloned_app_data_arc = app_data_arc_clone.clone();
                                     runtime_handle.spawn(async move {
-                                        if followed_pubkeys_clone_nip38_fetch.is_empty() {
-                                            println!("No followed users to fetch status from. Please fetch NIP-02 contacts first.");
-                                            let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                            app_data_async.timeline_posts.clear();
-                                            app_data_async.is_loading = false;
-                                            app_data_async.should_repaint = true;
-                                            return;
-                                        }
+                                        let timeline_result: Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> = async {
+                                            if followed_pubkeys.is_empty() {
+                                                println!("No followed users to fetch status from.");
+                                                return Ok(Vec::new());
+                                            }
 
-                                        let timeline_filter = Filter::new().authors(followed_pubkeys_clone_nip38_fetch.into_iter()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
+                                            // 1. Discoverリレーに接続するための専用クライアントを準備
+                                            let discover_opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
+                                            let discover_client = Client::with_opts(&my_keys, discover_opts);
+                                            for relay_url in discover_relays.lines() {
+                                                if !relay_url.trim().is_empty() {
+                                                    discover_client.add_relay(relay_url.trim()).await?;
+                                                }
+                                            }
+                                            discover_client.connect().await;
+                                            tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
 
-                                        // 1. ステータスイベントを取得
-                                        let status_events = client_clone_nip38_fetch.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await.unwrap_or_default();
+                                            // 2. フォローしているユーザーのkind:10002を取得
+                                            let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
+                                            let temp_relay_urls = fetch_relays_for_followed_users(&discover_client, followed_pubkeys_vec.clone()).await?;
+                                            println!("Found {} temporary relays from followed users' NIP-65 lists.", temp_relay_urls.len());
+                                            discover_client.shutdown().await?; // Discoverクライアントはここで役目終了
 
-                                        let mut timeline_posts = Vec::new();
-                                        if !status_events.is_empty() {
-                                            let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
+                                            // 3. 一時的なリレーをメインクライアントに追加
+                                            for url in &temp_relay_urls {
+                                                println!("Adding temporary relay: {}", url);
+                                                client.add_relay(url.clone()).await?;
+                                            }
+                                            client.connect().await; // 新しいリレーに接続
+                                            tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
 
-                                            // 2. 投稿者のNIP-01メタデータを取得
-                                            let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-                                            let metadata_events = client_clone_nip38_fetch.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await.unwrap_or_default();
+                                            // 4. ステータスイベント(kind:30315)を取得
+                                            let timeline_filter = Filter::new().authors(followed_pubkeys).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
+                                            println!("Fetching kind:30315 statuses from all connected relays.");
+                                            let status_events = client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
 
-                                            let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
-                                            for event in metadata_events {
-                                                if event.kind == Kind::Metadata {
+                                            let mut timeline_posts = Vec::new();
+                                            if !status_events.is_empty() {
+                                                let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
+                                                println!("Fetching metadata for {} authors.", author_pubkeys.len());
+
+                                                // 5. 投稿者のNIP-01メタデータを取得
+                                                let metadata_filter = Filter::new().authors(author_pubkeys).kind(Kind::Metadata);
+                                                let metadata_events = client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+
+                                                let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+                                                for event in metadata_events {
                                                     if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
                                                         profiles.insert(event.pubkey, metadata);
                                                     }
                                                 }
+
+                                                // 6. ステータスとメタデータをマージ
+                                                for event in status_events {
+                                                    timeline_posts.push(TimelinePost {
+                                                        author_pubkey: event.pubkey,
+                                                        author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                                                        content: event.content.clone(),
+                                                        created_at: event.created_at,
+                                                    });
+                                                }
                                             }
 
-                                            // 3. ステータスとメタデータをマージ
-                                            for event in status_events {
-                                                let post = TimelinePost {
-                                                    author_pubkey: event.pubkey,
-                                                    author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
-                                                    content: event.content.clone(),
-                                                    created_at: event.created_at,
-                                                };
-                                                timeline_posts.push(post);
+                                            // 7. 一時的なリレーを削除
+                                            for url in temp_relay_urls {
+                                                println!("Removing temporary relay: {}", url);
+                                                client.remove_relay(url).await?;
                                             }
-                                        }
+
+                                            Ok(timeline_posts)
+                                        }.await;
 
                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                                         app_data_async.is_loading = false;
-                                        if !timeline_posts.is_empty() {
-                                            timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                                            app_data_async.timeline_posts = timeline_posts;
-                                            println!("Fetched {} statuses.", app_data_async.timeline_posts.len());
-                                        } else {
-                                            app_data_async.timeline_posts.clear();
-                                            println!("No NIP-38 statuses found for followed users.");
+                                        match timeline_result {
+                                            Ok(mut posts) => {
+                                                if !posts.is_empty() {
+                                                    posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                                                    println!("Fetched {} statuses successfully.", posts.len());
+                                                    app_data_async.timeline_posts = posts;
+                                                } else {
+                                                    app_data_async.timeline_posts.clear();
+                                                    println!("No new statuses found for followed users.");
+                                                }
+                                            },
+                                            Err(e) => {
+                                                eprintln!("Failed to fetch timeline: {}", e);
+                                                // エラーが発生してもタイムラインはクリアしない
+                                            }
                                         }
                                         app_data_async.should_repaint = true;
                                     });
