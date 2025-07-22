@@ -12,7 +12,6 @@ use crate::{
     CONFIG_FILE, MAX_STATUS_LENGTH, CACHE_DIR, Cache,
     connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users
 };
-use fluent::FluentArgs;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
 
@@ -242,52 +241,51 @@ impl eframe::App for NostrStatusApp {
         // MutexGuardをupdate関数全体のスコープで保持
         let mut app_data = self.data.lock().unwrap();
 
-        // --- Localized Strings ---
-        let home_tab_text = app_data.lm.get_message("home-tab");
-        let relays_tab_text = app_data.lm.get_message("relays-tab");
-        let profile_tab_text = app_data.lm.get_message("profile-tab");
-        let login_heading_text = app_data.lm.get_message("login-heading");
-        let secret_key_label_text = app_data.lm.get_message("secret-key-label");
-        let secret_key_hint_text = app_data.lm.get_message("secret-key-hint");
-        let passphrase_label_text = app_data.lm.get_message("passphrase-label");
-        let passphrase_hint_text = app_data.lm.get_message("passphrase-hint");
-        let confirm_passphrase_label_text = app_data.lm.get_message("confirm-passphrase-label");
-        let confirm_passphrase_hint_text = app_data.lm.get_message("confirm-passphrase-hint");
-        let login_button_text = app_data.lm.get_message("login-button");
-        let register_button_text = app_data.lm.get_message("register-button");
-        let timeline_heading_text = app_data.lm.get_message("timeline-heading");
-        let fetch_latest_button_text = app_data.lm.get_message("fetch-latest-button");
-        let new_post_window_title_text = app_data.lm.get_message("new-post-window-title");
-        let set_status_heading_text = app_data.lm.get_message("set-status-heading");
-        let status_input_hint_text = app_data.lm.get_message("status-input-hint");
-        let publish_button_text = app_data.lm.get_message("publish-button");
-        let cancel_button_text = app_data.lm.get_message("cancel-button");
-        let status_too_long_text = app_data.lm.get_message("status-too-long");
-        let no_timeline_message_text = app_data.lm.get_message("no-timeline-message");
-        let current_connection_heading_text = app_data.lm.get_message("current-connection-heading");
-        let reconnect_button_text = app_data.lm.get_message("reconnect-button");
-        let edit_relay_lists_heading_text = app_data.lm.get_message("edit-relay-lists-heading");
-        let nip65_relay_list_label_text = app_data.lm.get_message("nip65-relay-list-label");
-        let add_relay_button_text = app_data.lm.get_message("add-relay-button");
-        let read_checkbox_text = app_data.lm.get_message("read-checkbox");
-        let write_checkbox_text = app_data.lm.get_message("write-checkbox");
-        let discover_relays_label_text = app_data.lm.get_message("discover-relays-label");
-        let default_relays_label_text = app_data.lm.get_message("default-relays-label");
-        let save_nip65_button_text = app_data.lm.get_message("save-nip65-button");
-        let profile_heading_text = app_data.lm.get_message("profile-heading");
-        let public_key_heading_text = app_data.lm.get_message("public-key-heading");
-        let copy_button_text = app_data.lm.get_message("copy-button");
-        let nip01_profile_heading_text = app_data.lm.get_message("nip01-profile-heading");
-        let name_label_text = app_data.lm.get_message("name-label");
-        let picture_url_label_text = app_data.lm.get_message("picture-url-label");
-        let nip05_label_text = app_data.lm.get_message("nip05-label");
-        let lud16_label_text = app_data.lm.get_message("lud16-label");
-        let about_label_text = app_data.lm.get_message("about-label");
-        let other_fields_label_text = app_data.lm.get_message("other-fields-label");
-        let save_profile_button_text = app_data.lm.get_message("save-profile-button");
-        let raw_json_heading_text = app_data.lm.get_message("raw-json-heading");
-        let logout_button_text = app_data.lm.get_message("logout-button");
-        let profile_fetch_status_text = app_data.lm.get_message(&app_data.profile_fetch_status);
+        // --- 日本語の文字列 ---
+        let home_tab_text = "ホーム";
+        let relays_tab_text = "リレー";
+        let profile_tab_text = "プロフィール";
+        let login_heading_text = "ログインまたは登録";
+        let secret_key_label_text = "秘密鍵 (nsec):";
+        let secret_key_hint_text = "nsec1...";
+        let passphrase_label_text = "パスフレーズ:";
+        let passphrase_hint_text = "パスワード";
+        let confirm_passphrase_label_text = "パスフレーズの確認:";
+        let confirm_passphrase_hint_text = "パスワードを再入力";
+        let login_button_text = "ログイン";
+        let register_button_text = "登録";
+        let timeline_heading_text = "タイムライン";
+        let fetch_latest_button_text = "最新の投稿を取得";
+        let new_post_window_title_text = "新規投稿";
+        let set_status_heading_text = "ステータスを設定";
+        let status_input_hint_text = "いまどうしてる？";
+        let publish_button_text = "公開";
+        let cancel_button_text = "キャンセル";
+        let status_too_long_text = "ステータスが長すぎます！";
+        let no_timeline_message_text = "タイムラインに投稿はまだありません。";
+        let current_connection_heading_text = "現在の接続";
+        let reconnect_button_text = "再接続";
+        let edit_relay_lists_heading_text = "リレーリストを編集";
+        let nip65_relay_list_label_text = "あなたのリレーリスト (NIP-65)";
+        let add_relay_button_text = "リレーを追加";
+        let read_checkbox_text = "読み取り";
+        let write_checkbox_text = "書き込み";
+        let discover_relays_label_text = "発見リレー (他ユーザーを見つけるため)";
+        let default_relays_label_text = "デフォルトリレー (フォールバック用)";
+        let save_nip65_button_text = "保存して発見リレーに公開";
+        let profile_heading_text = "あなたのプロフィール";
+        let public_key_heading_text = "あなたの公開鍵 (npub)";
+        let copy_button_text = "コピー";
+        let nip01_profile_heading_text = "NIP-01 プロフィールメタデータ";
+        let name_label_text = "名前:";
+        let picture_url_label_text = "画像URL:";
+        let nip05_label_text = "NIP-05:";
+        let lud16_label_text = "LUD-16:";
+        let about_label_text = "自己紹介:";
+        let other_fields_label_text = "その他のフィールド:";
+        let save_profile_button_text = "プロフィールを保存";
+        let raw_json_heading_text = "生JSON";
+        let logout_button_text = "ログアウト";
 
         // app_data_arc をクローンして非同期タスクに渡す
         let app_data_arc_clone = self.data.clone();
@@ -368,22 +366,17 @@ impl eframe::App for NostrStatusApp {
                                                 let cipher_key = Key::from_slice(&derived_key_bytes);
                                                 let cipher = ChaCha20Poly1305::new(cipher_key);
                                                 let nip49_encoded = config.encrypted_secret_key;
-                                                if !nip49_encoded.starts_with("#nip49:") { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-nip49-format").into()); }
+                                                if !nip49_encoded.starts_with("#nip49:") { return Err("Invalid NIP-49 format".into()); }
                                                 let decoded_bytes = general_purpose::STANDARD.decode(&nip49_encoded[7..])?;
-                                                if decoded_bytes.len() < 12 { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-nip49-payload").into()); }
+                                                if decoded_bytes.len() < 12 { return Err("Invalid NIP-49 payload".into()); }
                                                 let (ciphertext_and_tag, retrieved_nonce_bytes) = decoded_bytes.split_at(decoded_bytes.len() - 12);
                                                 let retrieved_nonce = Nonce::from_slice(retrieved_nonce_bytes);
-                                                let decrypted_bytes = cipher.decrypt(retrieved_nonce, ciphertext_and_tag).map_err(|_| cloned_app_data_arc.lock().unwrap().lm.get_message("incorrect-passphrase"))?;
+                                                let decrypted_bytes = cipher.decrypt(retrieved_nonce, ciphertext_and_tag).map_err(|_| "Incorrect passphrase")?;
                                                 let decrypted_secret_key_hex = hex::encode(&decrypted_bytes);
                                                 Ok(Keys::parse(&decrypted_secret_key_hex)?)
                                             })()?;
 
-                                            {
-                                                let _app_data = cloned_app_data_arc.lock().unwrap();
-                                                let mut args = FluentArgs::new();
-                                                args.set("pubkey", fluent::FluentValue::from(keys.public_key().to_bech32().unwrap_or_default()));
-                                                // println!("{}", _app_data.lm.get_message_with_args("key-decrypted", Some(&args)));
-                                            }
+                                            println!("Key decrypted for pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
 
                                             let client = Client::new(&keys);
 
@@ -417,14 +410,14 @@ impl eframe::App for NostrStatusApp {
                                             }).collect();
                                             app_data.editable_profile = initial_data.profile_metadata;
                                             app_data.nip01_profile_display = initial_data.profile_json_string;
-                                            app_data.profile_fetch_status = "profile-loaded-status".to_string();
-                                            // println!("Login process complete!");
+                                            app_data.profile_fetch_status = "Profile loaded.".to_string();
+                                            println!("Login process complete!");
 
                                             Ok(())
                                         }.await;
 
                                         if let Err(e) = login_result {
-                                            // eprintln!("Login failed: {}", e);
+                                            eprintln!("Login failed: {}", e);
                                             // 失敗した場合、Clientをシャットダウン
                                             // clientをOptionから取り出して所有権を得る
                                             let client_to_shutdown = {
@@ -438,9 +431,7 @@ impl eframe::App for NostrStatusApp {
                                             }
                                             // ログイン失敗時もNIP-01プロファイルをエラーメッセージで更新
                                             let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
-                                            let mut args = FluentArgs::new();
-                                            args.set("error", fluent::FluentValue::from(e.to_string()));
-                                            app_data_in_task.profile_fetch_status = app_data_in_task.lm.get_message_with_args("login-failed-status", Some(&args));
+                                            app_data_in_task.profile_fetch_status = format!("Login failed: {}", e);
                                         }
 
                                         let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
@@ -479,7 +470,7 @@ impl eframe::App for NostrStatusApp {
                                             // --- 1. 鍵の登録と保存 ---
                                             let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                                                 let user_provided_keys = Keys::parse(&secret_key_input)?;
-                                                if user_provided_keys.secret_key().is_err() { return Err(cloned_app_data_arc.lock().unwrap().lm.get_message("invalid-secret-key").into()); }
+                                                if user_provided_keys.secret_key().is_err() { return Err("Invalid secret key".into()); }
                                                 let mut salt_bytes = [0u8; 16];
                                                 OsRng.fill(&mut salt_bytes);
                                                 let salt_base64 = general_purpose::STANDARD.encode(&salt_bytes);
@@ -491,11 +482,7 @@ impl eframe::App for NostrStatusApp {
                                                 let mut nonce_bytes: [u8; 12] = [0u8; 12];
                                                 OsRng.fill(&mut nonce_bytes);
                                                 let nonce = Nonce::from_slice(&nonce_bytes);
-                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|_e| -> Box<dyn std::error::Error + Send + Sync> {
-                                                    let mut args = FluentArgs::new();
-                                                    args.set("error", fluent::FluentValue::from(format!("{:?}", _e)));
-                                                    cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip49-encryption-error", Some(&args)).into()
-                                                })?;
+                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|e| format!("NIP-49 encryption error: {:?}", e))?;
                                                 let mut encoded_data = ciphertext_with_tag.clone();
                                                 encoded_data.extend_from_slice(nonce_bytes.as_ref());
                                                 let nip49_encoded = format!("#nip49:{}", general_purpose::STANDARD.encode(&encoded_data));
@@ -505,12 +492,7 @@ impl eframe::App for NostrStatusApp {
                                                 Ok(user_provided_keys)
                                             })()?;
 
-                                            {
-                                                let _app_data = cloned_app_data_arc.lock().unwrap();
-                                                let mut args = FluentArgs::new();
-                                                args.set("pubkey", fluent::FluentValue::from(keys.public_key().to_bech32().unwrap_or_default()));
-                                                // println!("{}", _app_data.lm.get_message_with_args("registered-and-logged-in", Some(&args)));
-                                            }
+                                            println!("Registered and logged in with pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
 
                                             let client = Client::new(&keys);
 
@@ -544,13 +526,13 @@ impl eframe::App for NostrStatusApp {
                                             }).collect();
                                             app_data.editable_profile = initial_data.profile_metadata;
                                             app_data.nip01_profile_display = initial_data.profile_json_string;
-                                            app_data.profile_fetch_status = "profile-loaded-status".to_string();
+                                            app_data.profile_fetch_status = "Profile loaded.".to_string();
 
                                             Ok(())
                                         }.await;
 
-                                        if let Err(_e) = registration_result {
-                                            // eprintln!("Failed to register new key: {}", e);
+                                        if let Err(e) = registration_result {
+                                            eprintln!("Failed to register new key: {}", e);
                                             // エラーが発生した場合、作成された可能性のあるクライアントをシャットダウン
                                             let client_to_shutdown = {
                                                 let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
@@ -604,12 +586,10 @@ impl eframe::App for NostrStatusApp {
 
                                                     app_data.is_loading = true;
                                                     app_data.should_repaint = true;
-                                                    // println!("Publishing NIP-38 status...");
+                                                    println!("Publishing NIP-38 status...");
 
                                                     if status_message.chars().count() > MAX_STATUS_LENGTH {
-                                                        let mut args = FluentArgs::new();
-                                                        args.set("max", fluent::FluentValue::from(MAX_STATUS_LENGTH));
-                                                        eprintln!("{}", app_data.lm.get_message_with_args("status-too-long-error", Some(&args)));
+                                                        eprintln!("Status is too long (max {} chars)", MAX_STATUS_LENGTH);
                                                         app_data.is_loading = false;
                                                         app_data.should_repaint = true;
                                                         return;
@@ -621,24 +601,18 @@ impl eframe::App for NostrStatusApp {
                                                         let event = EventBuilder::new(Kind::ParameterizedReplaceable(30315), status_message.clone(), vec![Tag::Identifier(d_tag_value)]).to_event(&keys_clone_nip38_send);
                                                         match event {
                                                             Ok(event) => match client_clone_nip38_send.send_event(event).await {
-                                                                Ok(_event_id) => {
-                                                                    // let mut args = FluentArgs::new();
-                                                                    // args.set("event_id", event_id.to_string().into());
-                                                                    // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("status-published", Some(&args)));
+                                                                Ok(event_id) => {
+                                                                    println!("Status published with event id: {}", event_id);
                                                                     let mut data = cloned_app_data_arc.lock().unwrap();
                                                                     data.status_message_input.clear();
                                                                     data.show_post_dialog = false;
                                                                 }
-                                                                Err(_e) => {
-                                                                    // let mut args = FluentArgs::new();
-                                                                    // args.set("error", e.to_string().into());
-                                                                    // eprintln!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("status-publish-failed", Some(&args)));
+                                                                Err(e) => {
+                                                                    eprintln!("Failed to publish status: {}", e);
                                                                 }
                                                             },
-                                                            Err(_e) => {
-                                                                // let mut args = FluentArgs::new();
-                                                                // args.set("error", e.to_string().into());
-                                                                // eprintln!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("event-creation-failed", Some(&args)));
+                                                            Err(e) => {
+                                                                eprintln!("Failed to create event: {}", e);
                                                             }
                                                         }
                                                         let mut data = cloned_app_data_arc.lock().unwrap();
@@ -828,7 +802,7 @@ impl eframe::App for NostrStatusApp {
                                         runtime_handle.spawn(async move {
                                             match connect_to_relays_with_nip65(&client_clone, &keys_clone, &discover_relays, &default_relays).await {
                                                 Ok((log_message, fetched_nip65_relays)) => {
-                                                    // println!("Relay connection successful!\n{}", log_message);
+                                                    println!("Relay connection successful!\n{}", log_message);
                                                     let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                                                     if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
                                                         app_data_async.connected_relays_display = log_message[pos..].to_string();
@@ -843,8 +817,8 @@ impl eframe::App for NostrStatusApp {
                                                         EditableRelay { url, read, write }
                                                     }).collect();
                                                 }
-                                                Err(_e) => {
-                                                    // eprintln!("Failed to connect to relays: {}", e);
+                                                Err(e) => {
+                                                    eprintln!("Failed to connect to relays: {}", e);
                                                 }
                                             }
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -876,8 +850,8 @@ impl eframe::App for NostrStatusApp {
                                                 ui.label(format!("{}.", i + 1));
                                                 let text_edit = egui::TextEdit::singleline(&mut relay.url).desired_width(300.0);
                                                 ui.add(text_edit);
-                                                ui.checkbox(&mut relay.read, read_checkbox_text.clone());
-                                                ui.checkbox(&mut relay.write, write_checkbox_text.clone());
+                                                ui.checkbox(&mut relay.read, read_checkbox_text);
+                                                ui.checkbox(&mut relay.write, write_checkbox_text);
                                                 if ui.button("❌").clicked() {
                                                     relay_to_remove = Some(i);
                                                 }
@@ -941,7 +915,7 @@ impl eframe::App for NostrStatusApp {
                                                     .collect();
 
                                                 if tags.is_empty() {
-                                                    // println!("Warning: Publishing an empty NIP-65 list.");
+                                                            println!("Warning: Publishing an empty NIP-65 list.");
                                                 }
 
                                                 let event = EventBuilder::new(Kind::RelayList, "", tags).to_event(&keys)?;
@@ -957,17 +931,15 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                                 discover_client.connect().await;
 
-                                                let _event_id = discover_client.send_event(event).await?;
-                                                // let mut args = FluentArgs::new();
-                                                // args.set("event_id", event_id.to_string().into());
-                                                // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip65-published", Some(&args)));
+                                                        let event_id = discover_client.send_event(event).await?;
+                                                        println!("NIP-65 list published with event id: {}", event_id);
 
                                                 discover_client.shutdown().await?;
                                                 Ok(())
                                             }.await;
 
-                                            if let Err(_e) = result {
-                                                // eprintln!("Failed to publish NIP-65 list: {}", e);
+                                            if let Err(e) = result {
+                                                eprintln!("Failed to publish NIP-65 list: {}", e);
                                             }
 
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1000,7 +972,7 @@ impl eframe::App for NostrStatusApp {
                                     ui.heading(nip01_profile_heading_text);
                                     ui.add_space(10.0);
 
-                                    ui.label(profile_fetch_status_text); // プロファイル取得状態メッセージを表示
+                                    ui.label(app_data.profile_fetch_status.as_str()); // プロファイル取得状態メッセージを表示
 
                                     ui.horizontal(|ui| {
                                         ui.label(name_label_text);
@@ -1061,19 +1033,15 @@ impl eframe::App for NostrStatusApp {
 
                                                 // イベントをリレーに送信
                                                 match client_clone.send_event(event).await {
-                                                    Ok(_event_id) => {
-                                                        // let mut args = FluentArgs::new();
-                                                        // args.set("event_id", event_id.to_string().into());
-                                                        // println!("{}", cloned_app_data_arc.lock().unwrap().lm.get_message_with_args("nip01-published", Some(&args)));
+                                                    Ok(event_id) => {
+                                                        println!("NIP-01 profile published with event id: {}", event_id);
                                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                        app_data_async.profile_fetch_status = "profile-saved-status".to_string();
+                                                        app_data_async.profile_fetch_status = "Profile saved!".to_string();
                                                         app_data_async.nip01_profile_display = serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(&profile_content)?)?;
                                                     }
                                                     Err(e) => {
                                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                        let mut args = FluentArgs::new();
-                                                        args.set("error", fluent::FluentValue::from(e.to_string()));
-                                                        app_data_async.profile_fetch_status = app_data_async.lm.get_message_with_args("profile-save-failed-status", Some(&args));
+                                                        app_data_async.profile_fetch_status = format!("Failed to save profile: {}", e);
                                                     }
                                                 }
                                                 Ok(())
@@ -1081,9 +1049,7 @@ impl eframe::App for NostrStatusApp {
 
                                             if let Err(e) = result {
                                                 let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                let mut args = FluentArgs::new();
-                                                args.set("error", fluent::FluentValue::from(e.to_string()));
-                                                app_data_async.profile_fetch_status = app_data_async.lm.get_message_with_args("profile-save-error", Some(&args));
+                                                app_data_async.profile_fetch_status = format!("Error saving profile: {}", e);
                                             }
 
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1122,19 +1088,15 @@ impl eframe::App for NostrStatusApp {
                                         app_data.current_tab = AppTab::Home;
                                         app_data.nip01_profile_display.clear(); // ログアウト時もクリア
                                         app_data.editable_profile = ProfileMetadata::default(); // 編集可能プロファイルもリセット
-                                        app_data.profile_fetch_status = "please-login".to_string(); // 状態メッセージもリセット
+                                        app_data.profile_fetch_status = "Please log in.".to_string(); // 状態メッセージもリセット
                                         app_data.should_repaint = true; // 再描画をリクエスト
-                                        // println!("Logged out.");
+                                        println!("Logged out.");
 
                                         // Clientのシャットダウンを非同期タスクで行う
                                         if let Some(client) = client_to_shutdown {
-                                            let cloned_app_data_arc = app_data_arc_clone.clone();
                                             runtime_handle.spawn(async move {
                                                 if let Err(e) = client.shutdown().await {
-                                                    let app_data = cloned_app_data_arc.lock().unwrap();
-                                                    let mut args = FluentArgs::new();
-                                                    args.set("error", fluent::FluentValue::from(e.to_string()));
-                                                    eprintln!("{}", app_data.lm.get_message_with_args("client-shutdown-failed", Some(&args)));
+                                                    eprintln!("Failed to shutdown client: {}", e);
                                                 }
                                             });
                                         }

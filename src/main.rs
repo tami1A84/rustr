@@ -1,6 +1,5 @@
 mod ui;
 mod nostr_client;
-mod localization;
 
 use eframe::egui;
 use nostr::{Keys, PublicKey};
@@ -20,7 +19,6 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 
 use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users};
-use self::localization::LocalizationManager;
 
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
 const CACHE_DIR: &str = "cache";
@@ -94,7 +92,6 @@ pub struct TimelinePost {
 
 // アプリケーションの内部状態を保持する構造体
 pub struct NostrStatusAppInternal {
-    pub lm: Arc<LocalizationManager>,
     pub is_logged_in: bool,
     pub status_message_input: String, // ユーザーが入力するステータス
     pub show_post_dialog: bool, // 投稿ダイアログの表示状態
@@ -236,10 +233,7 @@ impl NostrStatusApp {
 
         _cc.egui_ctx.set_style(style);
 
-        let lm = Arc::new(LocalizationManager::new("ja")); // デフォルト言語を日本語に設定
-
         let app_data_internal = NostrStatusAppInternal {
-            lm,
             is_logged_in: false,
             status_message_input: String::new(),
             show_post_dialog: false,
@@ -257,7 +251,7 @@ impl NostrStatusApp {
             connected_relays_display: String::new(),
             nip01_profile_display: String::new(), // ここを初期化
             editable_profile: ProfileMetadata::default(), // 編集可能なプロファイルデータ
-            profile_fetch_status: "fetching-profile-status".to_string(), // プロファイル取得状態
+            profile_fetch_status: "Fetching profile...".to_string(), // プロファイル取得状態
             // リレーリスト編集用のフィールドを初期化
             nip65_relays: Vec::new(),
             discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
