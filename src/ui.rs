@@ -16,14 +16,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
 
 // --- データ取得とUI更新のための構造体 ---
-struct InitialData {
-    followed_pubkeys: HashSet<PublicKey>,
-    timeline_posts: Vec<TimelinePost>,
-    log_message: String,
-    fetched_nip65_relays: Vec<(String, Option<String>)>,
-    profile_metadata: ProfileMetadata,
-    profile_json_string: String,
-}
+// `InitialData`は`FreshData`に置き換えられたため、削除
 
 // --- Cache Helper Functions ---
 fn get_cache_path(pubkey: &str, filename: &str) -> std::path::PathBuf {
@@ -50,50 +43,68 @@ fn write_cache<T: Serialize>(path: &Path, data: &T) -> Result<(), Box<dyn std::e
 }
 
 
-// --- 初回データ取得ロジック ---
-async fn fetch_initial_data(
+// --- データ取得ロジック ---
+
+// --- Step 1: キャッシュからデータを読み込む ---
+struct CachedData {
+    followed_pubkeys: HashSet<PublicKey>,
+    nip65_relays: Vec<(String, Option<String>)>,
+    profile_metadata: ProfileMetadata,
+    timeline_posts: Vec<TimelinePost>, // タイムラインもキャッシュから読む
+}
+
+fn load_data_from_cache(pubkey_hex: &str) -> Result<CachedData, Box<dyn std::error::Error + Send + Sync>> {
+    println!("Loading data from cache for pubkey: {}", pubkey_hex);
+    let followed_pubkeys_cache_path = get_cache_path(pubkey_hex, "followed_pubkeys.json");
+    let nip65_relays_cache_path = get_cache_path(pubkey_hex, "nip65_relays.json");
+    let profile_cache_path = get_cache_path(pubkey_hex, "my_profile.json");
+    let timeline_cache_path = get_cache_path(pubkey_hex, "timeline_posts.json"); // タイムラインキャッシュのパス
+
+    let followed_cache = read_cache::<HashSet<PublicKey>>(&followed_pubkeys_cache_path)?;
+    let nip65_cache = read_cache::<Vec<(String, Option<String>)>>(&nip65_relays_cache_path)?;
+    let profile_cache = read_cache::<ProfileMetadata>(&profile_cache_path)?;
+    // タイムラインキャッシュは存在しない場合もあるので `ok()` を使う
+    let timeline_cache = read_cache::<Vec<TimelinePost>>(&timeline_cache_path).ok();
+
+    if followed_cache.is_expired() || nip65_cache.is_expired() || profile_cache.is_expired() {
+        return Err("Cache expired".into());
+    }
+
+    println!("Successfully loaded data from cache.");
+    Ok(CachedData {
+        followed_pubkeys: followed_cache.data,
+        nip65_relays: nip65_cache.data,
+        profile_metadata: profile_cache.data,
+        timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data), // なければ空のVec
+    })
+}
+
+
+// --- Step 2: ネットワークから新しいデータを取得 ---
+struct FreshData {
+    followed_pubkeys: HashSet<PublicKey>,
+    timeline_posts: Vec<TimelinePost>,
+    log_message: String,
+    fetched_nip65_relays: Vec<(String, Option<String>)>,
+    profile_metadata: ProfileMetadata,
+    profile_json_string: String,
+}
+
+async fn fetch_fresh_data_from_network(
     client: &Client,
     keys: &Keys,
     discover_relays: &str,
     default_relays: &str,
-) -> Result<InitialData, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<FreshData, Box<dyn std::error::Error + Send + Sync>> {
     let pubkey_hex = keys.public_key().to_string();
     let followed_pubkeys_cache_path = get_cache_path(&pubkey_hex, "followed_pubkeys.json");
     let nip65_relays_cache_path = get_cache_path(&pubkey_hex, "nip65_relays.json");
     let profile_cache_path = get_cache_path(&pubkey_hex, "my_profile.json");
+    let timeline_cache_path = get_cache_path(&pubkey_hex, "timeline_posts.json");
 
-    // --- 1. キャッシュの読み込み試行 ---
-    if let (Ok(followed_cache), Ok(nip65_cache), Ok(profile_cache)) = (
-        read_cache::<HashSet<PublicKey>>(&followed_pubkeys_cache_path),
-        read_cache::<Vec<(String, Option<String>)>>(&nip65_relays_cache_path),
-        read_cache::<ProfileMetadata>(&profile_cache_path),
-    ) {
-        if !followed_cache.is_expired() && !nip65_cache.is_expired() && !profile_cache.is_expired() {
-            println!("Loading data from cache...");
-            // キャッシュが有効な場合は、リレーに接続し、タイムラインのみをフェッチする
-            let (log_message, _) = connect_to_relays_with_nip65(client, keys, discover_relays, default_relays).await?;
+    println!("Fetching fresh data from network...");
 
-            let followed_pubkeys = followed_cache.data;
-            let fetched_nip65_relays = nip65_cache.data;
-            let profile_metadata = profile_cache.data;
-            let profile_json_string = serde_json::to_string_pretty(&profile_metadata)?;
-
-            let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
-
-            println!("Successfully loaded from cache and fetched new timeline.");
-            return Ok(InitialData {
-                followed_pubkeys,
-                timeline_posts,
-                log_message,
-                fetched_nip65_relays,
-                profile_metadata,
-                profile_json_string,
-            });
-        }
-    }
-
-    println!("Cache not found or expired. Fetching from network...");
-    // --- 2. リレー接続 (NIP-65) ---
+    // --- 1. リレー接続 (NIP-65) ---
     println!("Connecting to relays...");
     let (log_message, fetched_nip65_relays) = connect_to_relays_with_nip65(
         client,
@@ -105,7 +116,7 @@ async fn fetch_initial_data(
     write_cache(&nip65_relays_cache_path, &fetched_nip65_relays)?;
 
 
-    // --- 3. フォローリスト取得 (NIP-02) ---
+    // --- 2. フォローリスト取得 (NIP-02) ---
     println!("Fetching NIP-02 contact list...");
     let nip02_filter = Filter::new().authors(vec![keys.public_key()]).kind(Kind::ContactList).limit(1);
     let nip02_filter_id = client.subscribe(vec![nip02_filter], Some(SubscribeAutoCloseOptions::default())).await;
@@ -114,7 +125,7 @@ async fn fetch_initial_data(
     let mut received_nip02 = false;
 
     tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(10)) => {} // Timeout reduced
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {}
         _ = async {
             let mut notifications = client.notifications();
             while let Ok(notification) = notifications.recv().await {
@@ -139,16 +150,18 @@ async fn fetch_initial_data(
     println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
 
-    // --- 4. タイムライン取得 ---
+    // --- 3. タイムライン取得 ---
     let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
+    write_cache(&timeline_cache_path, &timeline_posts)?; // タイムラインもキャッシュに保存
 
-    // --- 5. 自身のNIP-01 プロフィールメタデータ取得 ---
+
+    // --- 4. 自身のNIP-01 プロフィールメタデータ取得 ---
     println!("Fetching NIP-01 profile metadata for self...");
     let (profile_metadata, profile_json_string) = fetch_nip01_profile(client, keys.public_key()).await?;
     println!("NIP-01 profile fetch for self finished.");
     write_cache(&profile_cache_path, &profile_metadata)?;
 
-    Ok(InitialData {
+    Ok(FreshData {
         followed_pubkeys,
         timeline_posts,
         log_message,
@@ -324,7 +337,7 @@ impl eframe::App for NostrStatusApp {
             .frame(panel_frame)
             .show(ctx, |ui| {
 
-            ui.add_enabled_ui(!app_data.is_loading, |ui| {
+            // ui.add_enabled_ui(!app_data.is_loading, |ui| { // この行を削除
                 if !app_data.is_logged_in {
                     if app_data.current_tab == AppTab::Home {
                         ui.group(|ui| {
@@ -379,39 +392,70 @@ impl eframe::App for NostrStatusApp {
                                             println!("Key decrypted for pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
 
                                             let client = Client::new(&keys);
+                                            let pubkey_hex = keys.public_key().to_string();
 
-                                            // --- 2. データ取得 ---
+                                            // --- Step 1: キャッシュを読み込んで即座にUIを更新 ---
                                             let (discover_relays, default_relays) = {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
-                                            let initial_data = fetch_initial_data(&client, &keys, &discover_relays, &default_relays).await?;
 
-                                            // --- 3. 最終的なUI状態の更新 ---
-                                            let mut app_data = cloned_app_data_arc.lock().unwrap();
-                                            app_data.my_keys = Some(keys);
-                                            app_data.nostr_client = Some(client);
-                                            app_data.is_logged_in = true;
-                                            app_data.current_tab = AppTab::Home;
-                                            // 取得したデータでUIを更新
-                                            app_data.followed_pubkeys = initial_data.followed_pubkeys;
-                                            app_data.followed_pubkeys_display = app_data.followed_pubkeys.iter().map(|pk| pk.to_bech32().unwrap_or_default()).collect::<Vec<_>>().join("\n");
-                                            app_data.timeline_posts = initial_data.timeline_posts;
-                                            if let Some(pos) = initial_data.log_message.find("--- 現在接続中のリレー ---") {
-                                                app_data.connected_relays_display = initial_data.log_message[pos..].to_string();
+                                            if let Ok(cached_data) = load_data_from_cache(&pubkey_hex) {
+                                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                app_data.my_keys = Some(keys.clone());
+                                                app_data.nostr_client = Some(client.clone());
+                                                app_data.followed_pubkeys = cached_data.followed_pubkeys;
+                                                app_data.timeline_posts = cached_data.timeline_posts;
+                                                app_data.editable_profile = cached_data.profile_metadata;
+                                                app_data.nip65_relays = cached_data.nip65_relays.into_iter().map(|(url, policy)| {
+                                                    let (read, write) = match policy.as_deref() {
+                                                        Some("read") => (true, false),
+                                                        Some("write") => (false, true),
+                                                        _ => (true, true),
+                                                    };
+                                                    EditableRelay { url, read, write }
+                                                }).collect();
+                                                app_data.is_logged_in = true;
+                                                app_data.is_loading = true; // Refreshing...
+                                                app_data.should_repaint = true;
+                                            } else {
+                                                // キャッシュがない場合は、まず基本的なログイン状態だけをセット
+                                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                app_data.my_keys = Some(keys.clone());
+                                                app_data.nostr_client = Some(client.clone());
+                                                app_data.is_logged_in = true;
+                                                app_data.is_loading = true;
+                                                app_data.should_repaint = true;
                                             }
-                                            app_data.nip65_relays = initial_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
-                                                let (read, write) = match policy.as_deref() {
-                                                    Some("read") => (true, false),
-                                                    Some("write") => (false, true),
-                                                    _ => (true, true),
-                                                };
-                                                EditableRelay { url, read, write }
-                                            }).collect();
-                                            app_data.editable_profile = initial_data.profile_metadata;
-                                            app_data.nip01_profile_display = initial_data.profile_json_string;
-                                            app_data.profile_fetch_status = "Profile loaded.".to_string();
-                                            println!("Login process complete!");
+
+                                            // --- Step 2: バックグラウンドでネットワークから最新データを取得 ---
+                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
+
+                                            // --- Step 3: 最新データでUIを再度更新 ---
+                                            if let Ok(fresh_data) = fresh_data_result {
+                                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                app_data.followed_pubkeys = fresh_data.followed_pubkeys;
+                                                app_data.timeline_posts = fresh_data.timeline_posts;
+                                                if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
+                                                    app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
+                                                }
+                                                app_data.nip65_relays = fresh_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                                                    let (read, write) = match policy.as_deref() {
+                                                        Some("read") => (true, false),
+                                                        Some("write") => (false, true),
+                                                        _ => (true, true),
+                                                    };
+                                                    EditableRelay { url, read, write }
+                                                }).collect();
+                                                app_data.editable_profile = fresh_data.profile_metadata;
+                                                app_data.nip01_profile_display = fresh_data.profile_json_string;
+                                                app_data.profile_fetch_status = "Profile loaded.".to_string();
+                                                println!("Network fetch complete!");
+                                            } else if let Err(e) = fresh_data_result {
+                                                eprintln!("Failed to fetch fresh data: {}", e);
+                                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                app_data.profile_fetch_status = format!("Failed to refresh data: {}", e);
+                                            }
 
                                             Ok(())
                                         }.await;
@@ -501,32 +545,36 @@ impl eframe::App for NostrStatusApp {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
-                                            let initial_data = fetch_initial_data(&client, &keys, &discover_relays, &default_relays).await?;
+                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
 
                                             // --- 3. UI状態の更新 ---
-                                            let mut app_data = cloned_app_data_arc.lock().unwrap();
-                                            app_data.my_keys = Some(keys);
-                                            app_data.nostr_client = Some(client);
-                                            app_data.is_logged_in = true;
-                                            app_data.current_tab = AppTab::Home;
-                                            // 取得したデータでUIを更新
-                                            app_data.followed_pubkeys = initial_data.followed_pubkeys;
-                                            app_data.followed_pubkeys_display = app_data.followed_pubkeys.iter().map(|pk| pk.to_bech32().unwrap_or_default()).collect::<Vec<_>>().join("\n");
-                                            app_data.timeline_posts = initial_data.timeline_posts;
-                                            if let Some(pos) = initial_data.log_message.find("--- 現在接続中のリレー ---") {
-                                                app_data.connected_relays_display = initial_data.log_message[pos..].to_string();
+                                            if let Ok(fresh_data) = fresh_data_result {
+                                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                app_data.my_keys = Some(keys);
+                                                app_data.nostr_client = Some(client);
+                                                app_data.is_logged_in = true;
+                                                app_data.current_tab = AppTab::Home;
+                                                // 取得したデータでUIを更新
+                                                app_data.followed_pubkeys = fresh_data.followed_pubkeys;
+                                                app_data.followed_pubkeys_display = app_data.followed_pubkeys.iter().map(|pk| pk.to_bech32().unwrap_or_default()).collect::<Vec<_>>().join("\n");
+                                                app_data.timeline_posts = fresh_data.timeline_posts;
+                                                if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
+                                                    app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
+                                                }
+                                                app_data.nip65_relays = fresh_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                                                    let (read, write) = match policy.as_deref() {
+                                                        Some("read") => (true, false),
+                                                        Some("write") => (false, true),
+                                                        _ => (true, true),
+                                                    };
+                                                    EditableRelay { url, read, write }
+                                                }).collect();
+                                                app_data.editable_profile = fresh_data.profile_metadata;
+                                                app_data.nip01_profile_display = fresh_data.profile_json_string;
+                                                app_data.profile_fetch_status = "Profile loaded.".to_string();
+                                            } else if let Err(e) = fresh_data_result {
+                                                eprintln!("Failed to fetch initial data for registration: {}", e);
                                             }
-                                            app_data.nip65_relays = initial_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
-                                                let (read, write) = match policy.as_deref() {
-                                                    Some("read") => (true, false),
-                                                    Some("write") => (false, true),
-                                                    _ => (true, true),
-                                                };
-                                                EditableRelay { url, read, write }
-                                            }).collect();
-                                            app_data.editable_profile = initial_data.profile_metadata;
-                                            app_data.nip01_profile_display = initial_data.profile_json_string;
-                                            app_data.profile_fetch_status = "Profile loaded.".to_string();
 
                                             Ok(())
                                         }.await;
@@ -629,9 +677,17 @@ impl eframe::App for NostrStatusApp {
                             }
                             // --- タイムライン表示 ---
                             card_frame.show(ui, |ui| {
-                                ui.heading(timeline_heading_text);
+                                ui.horizontal(|ui| {
+                                    ui.heading(timeline_heading_text);
+                                    if app_data.is_loading {
+                                        ui.add_space(10.0);
+                                        ui.spinner();
+                                        ui.label("更新中...");
+                                    }
+                                });
                                 ui.add_space(15.0);
-                                if ui.button(egui::RichText::new(fetch_latest_button_text).strong()).clicked() && !app_data.is_loading {
+                                let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
+                                if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
                                     let followed_pubkeys = app_data.followed_pubkeys.clone();
                                     let discover_relays = app_data.discover_relays_editor.clone();
                                     let my_keys = app_data.my_keys.clone().unwrap();
@@ -788,7 +844,8 @@ impl eframe::App for NostrStatusApp {
                                 card_frame.show(ui, |ui| {
                                     ui.heading(current_connection_heading_text);
                                     ui.add_space(10.0);
-                                    if ui.button(egui::RichText::new(reconnect_button_text).strong()).clicked() && !app_data.is_loading {
+                                    let reconnect_button = egui::Button::new(egui::RichText::new(reconnect_button_text).strong());
+                                    if ui.add_enabled(!app_data.is_loading, reconnect_button).clicked() {
                                         let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
                                         let keys_clone = app_data.my_keys.clone().unwrap();
                                         let discover_relays = app_data.discover_relays_editor.clone();
@@ -884,7 +941,8 @@ impl eframe::App for NostrStatusApp {
                                     });
 
                                     ui.add_space(15.0);
-                                    if ui.button(egui::RichText::new(save_nip65_button_text).strong()).clicked() && !app_data.is_loading {
+                                    let save_nip65_button = egui::Button::new(egui::RichText::new(save_nip65_button_text).strong());
+                                    if ui.add_enabled(!app_data.is_loading, save_nip65_button).clicked() {
                                         let keys = app_data.my_keys.clone().unwrap();
                                         let nip65_relays = app_data.nip65_relays.clone();
                                         let discover_relays = app_data.discover_relays_editor.clone();
@@ -1013,7 +1071,8 @@ impl eframe::App for NostrStatusApp {
 
 
                                     ui.add_space(10.0);
-                                    if ui.button(egui::RichText::new(save_profile_button_text).strong()).clicked() && !app_data.is_loading {
+                                    let save_profile_button = egui::Button::new(egui::RichText::new(save_profile_button_text).strong());
+                                    if ui.add_enabled(!app_data.is_loading, save_profile_button).clicked() {
                                         let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
                                         let keys_clone = app_data.my_keys.clone().unwrap();
                                         let editable_profile_clone = app_data.editable_profile.clone(); // 編集中のデータをクローン
@@ -1106,7 +1165,7 @@ impl eframe::App for NostrStatusApp {
                         },
                     }
                 }
-            });
+            // }); // この閉じ括弧も削除
         });
 
         // update メソッドの最後に should_repaint をチェックし、再描画をリクエスト

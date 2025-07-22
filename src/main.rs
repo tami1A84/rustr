@@ -82,7 +82,7 @@ pub struct EditableRelay {
 
 
 // タイムラインの各投稿を表すための構造体
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelinePost {
     pub author_pubkey: PublicKey,
     pub author_metadata: ProfileMetadata,
