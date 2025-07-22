@@ -9,10 +9,12 @@ use std::collections::{HashSet, HashMap};
 
 use crate::{
     NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay,
-    CONFIG_FILE, MAX_STATUS_LENGTH,
+    CONFIG_FILE, MAX_STATUS_LENGTH, CACHE_DIR, Cache,
     connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users
 };
 use fluent::FluentArgs;
+use serde::{de::DeserializeOwned, Serialize};
+use std::io::{Read, Write};
 
 // --- データ取得とUI更新のための構造体 ---
 struct InitialData {
@@ -24,6 +26,31 @@ struct InitialData {
     profile_json_string: String,
 }
 
+// --- Cache Helper Functions ---
+fn get_cache_path(pubkey: &str, filename: &str) -> std::path::PathBuf {
+    Path::new(CACHE_DIR).join(pubkey).join(filename)
+}
+
+fn read_cache<T: DeserializeOwned>(path: &Path) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut file = fs::File::open(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    let cache: Cache<T> = serde_json::from_str(&contents)?;
+    Ok(cache)
+}
+
+fn write_cache<T: Serialize>(path: &Path, data: &T) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let cache = Cache::new(data);
+    let json = serde_json::to_string_pretty(&cache)?;
+    let mut file = fs::File::create(path)?;
+    file.write_all(json.as_bytes())?;
+    Ok(())
+}
+
+
 // --- 初回データ取得ロジック ---
 async fn fetch_initial_data(
     client: &Client,
@@ -31,7 +58,43 @@ async fn fetch_initial_data(
     discover_relays: &str,
     default_relays: &str,
 ) -> Result<InitialData, Box<dyn std::error::Error + Send + Sync>> {
-    // --- 1. リレー接続 (NIP-65) ---
+    let pubkey_hex = keys.public_key().to_string();
+    let followed_pubkeys_cache_path = get_cache_path(&pubkey_hex, "followed_pubkeys.json");
+    let nip65_relays_cache_path = get_cache_path(&pubkey_hex, "nip65_relays.json");
+    let profile_cache_path = get_cache_path(&pubkey_hex, "my_profile.json");
+
+    // --- 1. キャッシュの読み込み試行 ---
+    if let (Ok(followed_cache), Ok(nip65_cache), Ok(profile_cache)) = (
+        read_cache::<HashSet<PublicKey>>(&followed_pubkeys_cache_path),
+        read_cache::<Vec<(String, Option<String>)>>(&nip65_relays_cache_path),
+        read_cache::<ProfileMetadata>(&profile_cache_path),
+    ) {
+        if !followed_cache.is_expired() && !nip65_cache.is_expired() && !profile_cache.is_expired() {
+            println!("Loading data from cache...");
+            // キャッシュが有効な場合は、リレーに接続し、タイムラインのみをフェッチする
+            let (log_message, _) = connect_to_relays_with_nip65(client, keys, discover_relays, default_relays).await?;
+
+            let followed_pubkeys = followed_cache.data;
+            let fetched_nip65_relays = nip65_cache.data;
+            let profile_metadata = profile_cache.data;
+            let profile_json_string = serde_json::to_string_pretty(&profile_metadata)?;
+
+            let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
+
+            println!("Successfully loaded from cache and fetched new timeline.");
+            return Ok(InitialData {
+                followed_pubkeys,
+                timeline_posts,
+                log_message,
+                fetched_nip65_relays,
+                profile_metadata,
+                profile_json_string,
+            });
+        }
+    }
+
+    println!("Cache not found or expired. Fetching from network...");
+    // --- 2. リレー接続 (NIP-65) ---
     println!("Connecting to relays...");
     let (log_message, fetched_nip65_relays) = connect_to_relays_with_nip65(
         client,
@@ -40,8 +103,10 @@ async fn fetch_initial_data(
         default_relays
     ).await?;
     println!("Relay connection process finished.\n{}", log_message);
+    write_cache(&nip65_relays_cache_path, &fetched_nip65_relays)?;
 
-    // --- 2. フォローリスト取得 (NIP-02) ---
+
+    // --- 3. フォローリスト取得 (NIP-02) ---
     println!("Fetching NIP-02 contact list...");
     let nip02_filter = Filter::new().authors(vec![keys.public_key()]).kind(Kind::ContactList).limit(1);
     let nip02_filter_id = client.subscribe(vec![nip02_filter], Some(SubscribeAutoCloseOptions::default())).await;
@@ -69,66 +134,20 @@ async fn fetch_initial_data(
 
     if !received_nip02 {
         eprintln!("Failed to fetch contact list (timed out or not found).");
+    } else {
+        write_cache(&followed_pubkeys_cache_path, &followed_pubkeys)?;
     }
     println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
-    // --- 3. タイムライン取得 ---
-    let mut timeline_posts = Vec::new();
-    if !followed_pubkeys.is_empty() {
-        // 3a. フォローユーザーのNIP-65(kind:10002)を取得
-        let temp_discover_client = Client::new(keys);
-        for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
-            temp_discover_client.add_relay(relay_url.trim()).await?;
-        }
-        temp_discover_client.connect().await;
-        let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
-        let write_relay_urls = fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
-        temp_discover_client.shutdown().await?;
 
-        if !write_relay_urls.is_empty() {
-            // 3b. 取得したwriteリレーで新しい一時クライアントを作成
-            let temp_fetch_client = Client::new(keys);
-            for url in &write_relay_urls {
-                temp_fetch_client.add_relay(url.clone()).await?;
-            }
-            temp_fetch_client.connect().await;
+    // --- 4. タイムライン取得 ---
+    let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
 
-            // 3c. フォローユーザーのステータス(kind:30315)を取得
-            let timeline_filter = Filter::new().authors(followed_pubkeys.clone()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
-            let status_events = temp_fetch_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
-            println!("Fetched {} statuses from followed users' write relays.", status_events.len());
-
-            if !status_events.is_empty() {
-                // 3d. ステータス投稿者のプロフィール(kind:0)を取得
-                let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
-                let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-                let metadata_events = temp_fetch_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
-                let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
-                for event in metadata_events {
-                    if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
-                        profiles.insert(event.pubkey, metadata);
-                    }
-                }
-
-                // 3e. ステータスとメタデータをマージ
-                for event in status_events {
-                    timeline_posts.push(TimelinePost {
-                        author_pubkey: event.pubkey,
-                        author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
-                        content: event.content.clone(),
-                        created_at: event.created_at,
-                    });
-                }
-                timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-            }
-            temp_fetch_client.shutdown().await?;
-        }
-    }
-
-    // --- 4. 自身のNIP-01 プロフィールメタデータ取得 ---
+    // --- 5. 自身のNIP-01 プロフィールメタデータ取得 ---
     println!("Fetching NIP-01 profile metadata for self...");
     let (profile_metadata, profile_json_string) = fetch_nip01_profile(client, keys.public_key()).await?;
     println!("NIP-01 profile fetch for self finished.");
+    write_cache(&profile_cache_path, &profile_metadata)?;
 
     Ok(InitialData {
         followed_pubkeys,
@@ -138,6 +157,67 @@ async fn fetch_initial_data(
         profile_metadata,
         profile_json_string,
     })
+}
+
+async fn fetch_timeline_posts(
+    keys: &Keys,
+    discover_relays: &str,
+    followed_pubkeys: &HashSet<PublicKey>,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut timeline_posts = Vec::new();
+    if followed_pubkeys.is_empty() {
+        return Ok(timeline_posts);
+    }
+
+    // 3a. フォローユーザーのNIP-65(kind:10002)を取得
+    let temp_discover_client = Client::new(keys);
+    for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
+        temp_discover_client.add_relay(relay_url.trim()).await?;
+    }
+    temp_discover_client.connect().await;
+    let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
+    let write_relay_urls = fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
+    temp_discover_client.shutdown().await?;
+
+    if !write_relay_urls.is_empty() {
+        // 3b. 取得したwriteリレーで新しい一時クライアントを作成
+        let temp_fetch_client = Client::new(keys);
+        for url in &write_relay_urls {
+            temp_fetch_client.add_relay(url.clone()).await?;
+        }
+        temp_fetch_client.connect().await;
+
+        // 3c. フォローユーザーのステータス(kind:30315)を取得
+        let timeline_filter = Filter::new().authors(followed_pubkeys.clone()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
+        let status_events = temp_fetch_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
+        println!("Fetched {} statuses from followed users' write relays.", status_events.len());
+
+        if !status_events.is_empty() {
+            // 3d. ステータス投稿者のプロフィール(kind:0)を取得
+            let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
+            let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
+            let metadata_events = temp_fetch_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+            let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+            for event in metadata_events {
+                if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
+                    profiles.insert(event.pubkey, metadata);
+                }
+            }
+
+            // 3e. ステータスとメタデータをマージ
+            for event in status_events {
+                timeline_posts.push(TimelinePost {
+                    author_pubkey: event.pubkey,
+                    author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                    content: event.content.clone(),
+                    created_at: event.created_at,
+                });
+            }
+            timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+        }
+        temp_fetch_client.shutdown().await?;
+    }
+    Ok(timeline_posts)
 }
 
 
