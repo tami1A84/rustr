@@ -17,17 +17,43 @@ use tokio::runtime::Runtime;
 
 // serde と serde_json を使って設定ファイルとNIP-01メタデータを構造体として定義
 use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
 
 use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users};
 use self::localization::LocalizationManager;
 
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
+const CACHE_DIR: &str = "cache";
+const CACHE_TTL_SECONDS: i64 = 24 * 60 * 60; // 24 hours
+
 const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     encrypted_secret_key: String, // NIP-49フォーマットの暗号化された秘密鍵
     salt: String, // PBKDF2に使用するソルト (Base64エンコード)
+}
+
+// --- キャッシュデータ構造 ---
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Cache<T> {
+    pub timestamp: DateTime<Utc>,
+    pub data: T,
+}
+
+impl<T> Cache<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            data,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let now = Utc::now();
+        let duration = now.signed_duration_since(self.timestamp);
+        duration.num_seconds() > CACHE_TTL_SECONDS
+    }
 }
 
 // NIP-01 プロファイルメタデータのための構造体
@@ -264,6 +290,12 @@ impl NostrStatusApp {
 
 fn main() -> eframe::Result<()> {
     env_logger::init(); // 必要に応じて有効化
+
+    // --- キャッシュディレクトリを作成 ---
+    let cache_dir = Path::new("cache");
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(cache_dir).expect("Failed to create cache directory");
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 700.0]),

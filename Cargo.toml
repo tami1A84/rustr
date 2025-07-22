@@ -30,4 +30,5 @@ usvg = "0.45"
 fluent = "0.16"
 unic-langid = "0.9"
 intl-memoizer = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
 
