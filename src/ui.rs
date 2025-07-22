@@ -343,33 +343,22 @@ impl eframe::App for NostrStatusApp {
                         ui.group(|ui| {
                             ui.heading(login_heading_text);
                             ui.add_space(10.0);
-                            ui.horizontal(|ui| {
-                                ui.label(secret_key_label_text);
-                                ui.add(egui::TextEdit::singleline(&mut app_data.secret_key_input)
-                                    .hint_text(secret_key_hint_text));
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label(passphrase_label_text);
-                                ui.add(egui::TextEdit::singleline(&mut app_data.passphrase_input)
-                                    .password(true)
-                                    .hint_text(passphrase_hint_text));
-                            });
-
                             if Path::new(CONFIG_FILE).exists() {
+                                // --- ログイン ---
+                                ui.horizontal(|ui| {
+                                    ui.label(passphrase_label_text);
+                                    ui.add(egui::TextEdit::singleline(&mut app_data.passphrase_input)
+                                        .password(true)
+                                        .hint_text(passphrase_hint_text));
+                                });
+
                                 if ui.button(egui::RichText::new(login_button_text).strong()).clicked() && !app_data.is_loading {
                                     let passphrase = app_data.passphrase_input.clone();
-
-                                    // ロード状態と再描画フラグを更新（現在のMutexGuardで）
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
-                                    // println!("Attempting to login...");
-
-                                    // app_data_arc_clone を async move ブロックに渡す
                                     let cloned_app_data_arc = app_data_arc_clone.clone();
                                     runtime_handle.spawn(async move {
                                         let login_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                                            // --- 1. 鍵の復号 ---
-                                            // println!("Attempting to decrypt secret key...");
                                             let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                                                 let config_str = fs::read_to_string(CONFIG_FILE)?;
                                                 let config: Config = serde_json::from_str(&config_str)?;
@@ -388,18 +377,13 @@ impl eframe::App for NostrStatusApp {
                                                 let decrypted_secret_key_hex = hex::encode(&decrypted_bytes);
                                                 Ok(Keys::parse(&decrypted_secret_key_hex)?)
                                             })()?;
-
                                             println!("Key decrypted for pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
-
                                             let client = Client::new(&keys);
                                             let pubkey_hex = keys.public_key().to_string();
-
-                                            // --- Step 1: キャッシュを読み込んで即座にUIを更新 ---
                                             let (discover_relays, default_relays) = {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
-
                                             if let Ok(cached_data) = load_data_from_cache(&pubkey_hex) {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.my_keys = Some(keys.clone());
@@ -416,10 +400,9 @@ impl eframe::App for NostrStatusApp {
                                                     EditableRelay { url, read, write }
                                                 }).collect();
                                                 app_data.is_logged_in = true;
-                                                app_data.is_loading = true; // Refreshing...
+                                                app_data.is_loading = true;
                                                 app_data.should_repaint = true;
                                             } else {
-                                                // キャッシュがない場合は、まず基本的なログイン状態だけをセット
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.my_keys = Some(keys.clone());
                                                 app_data.nostr_client = Some(client.clone());
@@ -427,11 +410,7 @@ impl eframe::App for NostrStatusApp {
                                                 app_data.is_loading = true;
                                                 app_data.should_repaint = true;
                                             }
-
-                                            // --- Step 2: バックグラウンドでネットワークから最新データを取得 ---
                                             let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
-
-                                            // --- Step 3: 最新データでUIを再度更新 ---
                                             if let Ok(fresh_data) = fresh_data_result {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.followed_pubkeys = fresh_data.followed_pubkeys;
@@ -456,62 +435,63 @@ impl eframe::App for NostrStatusApp {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.profile_fetch_status = format!("Failed to refresh data: {}", e);
                                             }
-
                                             Ok(())
                                         }.await;
-
                                         if let Err(e) = login_result {
                                             eprintln!("Login failed: {}", e);
-                                            // 失敗した場合、Clientをシャットダウン
-                                            // clientをOptionから取り出して所有権を得る
                                             let client_to_shutdown = {
                                                 let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
-                                                app_data_in_task.nostr_client.take() // Option::take()で所有権を取得
+                                                app_data_in_task.nostr_client.take()
                                             };
                                             if let Some(client) = client_to_shutdown {
                                                 if let Err(_e) = client.shutdown().await {
                                                      eprintln!("Failed to shutdown client: {}", _e);
                                                 }
                                             }
-                                            // ログイン失敗時もNIP-01プロファイルをエラーメッセージで更新
                                             let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                             app_data_in_task.profile_fetch_status = format!("Login failed: {}", e);
                                         }
-
                                         let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                         app_data_in_task.is_loading = false;
-                                        app_data_in_task.should_repaint = true; // 再描画をリクエスト
+                                        app_data_in_task.should_repaint = true;
                                     });
                                 }
                             } else {
+                                // --- 新規登録 ---
+                                ui.horizontal(|ui| {
+                                    ui.label(secret_key_label_text);
+                                    ui.add(egui::TextEdit::singleline(&mut app_data.secret_key_input)
+                                        .password(true)
+                                        .hint_text(secret_key_hint_text));
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label(passphrase_label_text);
+                                    ui.add(egui::TextEdit::singleline(&mut app_data.passphrase_input)
+                                        .password(true)
+                                        .hint_text(passphrase_hint_text));
+                                });
                                 ui.horizontal(|ui| {
                                     ui.label(confirm_passphrase_label_text);
                                     ui.add(egui::TextEdit::singleline(&mut app_data.confirm_passphrase_input)
                                         .password(true)
-                                    .hint_text(confirm_passphrase_hint_text));
+                                        .hint_text(confirm_passphrase_hint_text));
                                 });
 
                                 if ui.button(egui::RichText::new(register_button_text).strong()).clicked() && !app_data.is_loading {
                                     let secret_key_input = app_data.secret_key_input.clone();
                                     let passphrase = app_data.passphrase_input.clone();
                                     let confirm_passphrase = app_data.confirm_passphrase_input.clone();
-
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
-                                    // println!("Registering new key...");
-
                                     let cloned_app_data_arc = app_data_arc_clone.clone();
                                     runtime_handle.spawn(async move {
                                         if passphrase != confirm_passphrase {
-                                            // TODO: Show error message to user
                                             let mut current_app_data = cloned_app_data_arc.lock().unwrap();
                                             current_app_data.is_loading = false;
-                                            current_app_data.should_repaint = true; // 再描画をリクエスト
+                                            current_app_data.should_repaint = true;
                                             return;
                                         }
-
                                         let registration_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                                            // --- 1. 鍵の登録と保存 ---
                                             let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                                                 let user_provided_keys = Keys::parse(&secret_key_input)?;
                                                 if user_provided_keys.secret_key().is_err() { return Err("Invalid secret key".into()); }
@@ -535,26 +515,19 @@ impl eframe::App for NostrStatusApp {
                                                 fs::write(CONFIG_FILE, config_json)?;
                                                 Ok(user_provided_keys)
                                             })()?;
-
                                             println!("Registered and logged in with pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
-
                                             let client = Client::new(&keys);
-
-                                            // --- 2. 初回データ取得 ---
                                             let (discover_relays, default_relays) = {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
                                             let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
-
-                                            // --- 3. UI状態の更新 ---
                                             if let Ok(fresh_data) = fresh_data_result {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.my_keys = Some(keys);
                                                 app_data.nostr_client = Some(client);
                                                 app_data.is_logged_in = true;
                                                 app_data.current_tab = AppTab::Home;
-                                                // 取得したデータでUIを更新
                                                 app_data.followed_pubkeys = fresh_data.followed_pubkeys;
                                                 app_data.followed_pubkeys_display = app_data.followed_pubkeys.iter().map(|pk| pk.to_bech32().unwrap_or_default()).collect::<Vec<_>>().join("\n");
                                                 app_data.timeline_posts = fresh_data.timeline_posts;
@@ -575,13 +548,10 @@ impl eframe::App for NostrStatusApp {
                                             } else if let Err(e) = fresh_data_result {
                                                 eprintln!("Failed to fetch initial data for registration: {}", e);
                                             }
-
                                             Ok(())
                                         }.await;
-
                                         if let Err(e) = registration_result {
                                             eprintln!("Failed to register new key: {}", e);
-                                            // エラーが発生した場合、作成された可能性のあるクライアントをシャットダウン
                                             let client_to_shutdown = {
                                                 let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                                 app_data_in_task.nostr_client.take()
@@ -592,10 +562,9 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                             }
                                         }
-
                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                                         app_data_async.is_loading = false;
-                                        app_data_async.should_repaint = true; // 再描画をリクエスト
+                                        app_data_async.should_repaint = true;
                                     });
                                 }
                             }
