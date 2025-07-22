@@ -20,13 +20,14 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
 
 ## 特徴
 
-*   **直感的なGUI:** 全ての操作を簡単に行えるグラフィカルインターフェース。
+*   **洗練されたUI:** LINE Seed JPフォントを採用し、モダンなmacOS風のデザインで、直感的な操作が可能です。
 *   **ステータス投稿 (NIP-38):** あなたの現在の状況を簡単に投稿できます。
 *   **プロフィールの表示と編集 (NIP-01):** Nostrのプロフィール情報を表示し、編集することができます。
-*   **安全な鍵管理 (NIP-49):** 秘密鍵はパスフレーズで暗号化され、ローカルに保存されます。起動時にパスフレーズの入力が求められます。
+*   **安全な鍵管理 (NIP-49):** 秘密鍵はパスフレーズで暗号化（ChaCha20Poly1305）され、ローカルに保存されます。起動時にパスフレーズの入力が求められます。
 *   **自動的なリレー接続とステータス取得:** ログイン時にあなたのリレーリスト（NIP-65）に自動で接続し、フォローしているユーザーのリスト（NIP-02）と最新のステータス（NIP-38）を取得して表示します。
-*   **リレーリスト管理 (NIP-65):** アプリから直接リレーリストを閲覧、編集、公開できます。リレーの追加や削除、読み書きの権限設定が可能です。
+*   **高度なリレーリスト管理 (NIP-65):** アプリから直接リレーリストを閲覧、編集、公開できます。リレーの追加や削除、読み書きの権限設定が可能です。さらに、フォローしているユーザーのリレーリストをインポートする機能もあります。
 *   **タブ形式のインターフェース:** ホーム（タイムラインと投稿）、リレー、プロフィールのタブで簡単に機能を切り替えられます。
+*   **パフォーマンス:** プロフィール情報やリレーリストなどをキャッシュすることで、次回の起動を高速化します。
 *   **会話機能の排除:** このツールはステータス投稿専用です。リプライやメンションなどの会話機能はありません。
 
 ## 技術スタック
@@ -75,13 +76,14 @@ Logs are displayed in the terminal, not in the side panel.
 
 ## Features
 
-*   **Intuitive GUI:** Easy-to-use graphical interface for all operations.
+*   **Sophisticated UI:** A modern, macOS-inspired design with the LINE Seed JP font for intuitive operation.
 *   **Post Status Updates (NIP-38):** Easily post your current status.
 *   **Profile Display and Editing (NIP-01):** View and edit your Nostr profile information.
-*   **Secure Key Management (NIP-49):** Your secret key is encrypted with a passphrase and stored locally. You will be prompted for the passphrase at startup.
+*   **Secure Key Management (NIP-49):** Your secret key is encrypted (ChaCha20Poly1305) with a passphrase and stored locally. You will be prompted for the passphrase at startup.
 *   **Automatic Relay Connection and Status Retrieval:** On login, the application automatically connects to your relay list (NIP-65), retrieves your follow list (NIP-02), and displays the latest statuses (NIP-38).
-*   **Relay List Management (NIP-65):** View, edit, and publish your relay list directly from the app. You can add or remove relays, and set read/write preferences.
+*   **Advanced Relay List Management (NIP-65):** View, edit, and publish your relay list directly from the app. You can add or remove relays, set read/write preferences, and even import relay lists from users you follow.
 *   **Tabbed Interface:** Easily switch between functions with tabs for Home (Timeline & Posting), Relays, and Profile.
+*   **Performance:** Caches profile information and relay lists to speed up subsequent launches.
 *   **No Conversation Features:** This tool is for posting statuses only. There are no replies, mentions, or other conversational features.
 
 ## Technical Stacks
