@@ -1,5 +1,6 @@
-use nostr::{Filter, Kind, Keys, PublicKey, Tag};
+use nostr::{nips::nip19::ToBech32, Filter, Kind, Keys, PublicKey, Tag};
 use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::ProfileMetadata;
@@ -201,5 +202,58 @@ pub async fn fetch_nip01_profile(client: &Client, public_key: PublicKey) -> Resu
     }
 }
 
+// NIP-02 コンタクトリストを更新する関数
+pub async fn update_contact_list(
+    client: &Client,
+    keys: &Keys,
+    pubkey_to_modify: PublicKey,
+    follow: bool, // trueでフォロー、falseでアンフォロー
+) -> Result<HashSet<PublicKey>, Box<dyn std::error::Error + Send + Sync>> {
+    // 1. 現在のコンタクトリストを取得
+    let filter = Filter::new().authors(vec![keys.public_key()]).kind(Kind::ContactList).limit(1);
+    let events = client.get_events_of(vec![filter], Some(Duration::from_secs(10))).await?;
+
+    let mut current_tags: Vec<Tag> = if let Some(event) = events.first() {
+        event.tags.clone()
+    } else {
+        Vec::new()
+    };
+
+    let mut followed_pubkeys: HashSet<PublicKey> = current_tags.iter().filter_map(|tag| {
+        if let Tag::PublicKey { public_key, .. } = tag {
+            Some(*public_key)
+        } else {
+            None
+        }
+    }).collect();
+
+    // 2. フォローリストを変更
+    if follow {
+        if followed_pubkeys.insert(pubkey_to_modify) {
+            current_tags.push(Tag::public_key(pubkey_to_modify));
+            println!("Following {}", pubkey_to_modify.to_bech32()?);
+        }
+    } else {
+        if followed_pubkeys.remove(&pubkey_to_modify) {
+            current_tags.retain(|tag| {
+                if let Tag::PublicKey { public_key, .. } = tag {
+                    *public_key != pubkey_to_modify
+                } else {
+                    true
+                }
+            });
+            println!("Unfollowing {}", pubkey_to_modify.to_bech32()?);
+        }
+    }
+
+    // 3. 新しいコンタクトリストイベントを作成して送信
+    use nostr::EventBuilder;
+    let event = EventBuilder::new(Kind::ContactList, "", current_tags).to_event(keys)?;
+    client.send_event(event).await?;
+
+    println!("Contact list updated successfully.");
+
+    Ok(followed_pubkeys)
+}
 
 
