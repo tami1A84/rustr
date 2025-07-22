@@ -10,7 +10,7 @@ use std::collections::{HashSet, HashMap};
 use crate::{
     NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay,
     CONFIG_FILE, MAX_STATUS_LENGTH, CACHE_DIR, Cache,
-    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users
+    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
@@ -786,6 +786,7 @@ impl eframe::App for NostrStatusApp {
                                     });
                                 }
                                 ui.add_space(10.0);
+                                let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
                                 egui::ScrollArea::vertical().id_salt("timeline_scroll_area").max_height(ui.available_height() - 100.0).show(ui, |ui| {
                                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                                         if app_data.timeline_posts.is_empty() {
@@ -817,6 +818,26 @@ impl eframe::App for NostrStatusApp {
                                                             format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len()-4..])
                                                         };
                                                         ui.label(egui::RichText::new(display_name).strong());
+
+                                                        // --- Timestamp ---
+                                                        let created_at_datetime = chrono::DateTime::from_timestamp(post.created_at.as_i64(), 0).unwrap();
+                                                        let local_datetime = created_at_datetime.with_timezone(&chrono::Local);
+                                                        ui.label(egui::RichText::new(local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()).color(egui::Color32::GRAY).small());
+
+
+                                                        // --- Context Menu ---
+                                                        if let Some(my_keys) = &app_data.my_keys {
+                                                            if post.author_pubkey != my_keys.public_key() {
+                                                                ui.menu_button("...", |ui| {
+                                                                    let is_followed = app_data.followed_pubkeys.contains(&post.author_pubkey);
+                                                                    let button_text = if is_followed { "アンフォロー" } else { "フォロー" };
+                                                                    if ui.button(button_text).clicked() {
+                                                                        pubkey_to_modify = Some((post.author_pubkey, !is_followed));
+                                                                        ui.close();
+                                                                    }
+                                                                });
+                                                            }
+                                                        }
                                                     });
                                                     ui.add_space(5.0);
                                                     ui.add(egui::Label::new(&post.content).wrap());
@@ -826,6 +847,40 @@ impl eframe::App for NostrStatusApp {
                                         }
                                     });
                                 });
+
+                                if let Some((pubkey, follow)) = pubkey_to_modify {
+                                    if !app_data.is_loading {
+                                        let client = app_data.nostr_client.as_ref().unwrap().clone();
+                                        let keys = app_data.my_keys.as_ref().unwrap().clone();
+
+                                        app_data.is_loading = true;
+                                        app_data.should_repaint = true;
+
+                                        let cloned_app_data_arc = app_data_arc_clone.clone();
+                                        runtime_handle.spawn(async move {
+                                            match update_contact_list(&client, &keys, pubkey, follow).await {
+                                                Ok(new_followed_pubkeys) => {
+                                                    let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                                    app_data.followed_pubkeys = new_followed_pubkeys;
+                                                    // キャッシュも更新
+                                                    if let Some(keys) = &app_data.my_keys {
+                                                        let pubkey_hex = keys.public_key().to_string();
+                                                        let cache_path = get_cache_path(&pubkey_hex, "followed_pubkeys.json");
+                                                        if let Err(e) = write_cache(&cache_path, &app_data.followed_pubkeys) {
+                                                            eprintln!("Failed to write follow list cache: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Failed to update contact list: {}", e);
+                                                }
+                                            }
+                                            let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                            app_data.is_loading = false;
+                                            app_data.should_repaint = true;
+                                        });
+                                    }
+                                }
                             });
 
                             // --- フローティングアクションボタン (FAB) ---
