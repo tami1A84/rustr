@@ -114,6 +114,7 @@ pub struct NostrStatusAppInternal {
     pub nip65_relays: Vec<EditableRelay>,
     pub discover_relays_editor: String,
     pub default_relays_editor: String,
+    pub current_theme: AppTheme,
 }
 
 // タブの状態を管理するenum
@@ -122,6 +123,107 @@ pub enum AppTab {
     Home, // ログイン/登録画面とタイムラインを含む
     Relays,
     Profile,
+}
+
+// UIテーマを管理するenum
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+pub enum AppTheme {
+    Light,
+    Dark,
+}
+
+impl AppTheme {
+    pub fn card_background_color(&self) -> egui::Color32 {
+        match self {
+            AppTheme::Light => egui::Color32::from_white_alpha(250),
+            AppTheme::Dark => egui::Color32::from_rgb(44, 44, 46),
+        }
+    }
+
+    pub fn text_color(&self) -> egui::Color32 {
+        match self {
+            AppTheme::Light => egui::Color32::BLACK,
+            AppTheme::Dark => egui::Color32::WHITE,
+        }
+    }
+}
+
+// --- ライトモードのVisualsを返す関数 ---
+pub fn light_visuals() -> egui::Visuals {
+    let mut visuals = egui::Visuals::light();
+    let background_color = egui::Color32::from_rgb(242, 242, 247);
+    let panel_color = egui::Color32::from_rgb(255, 255, 255);
+    let text_color = egui::Color32::BLACK;
+    let accent_color = egui::Color32::from_rgb(0, 110, 230);
+    let separator_color = egui::Color32::from_gray(225);
+
+    visuals.window_fill = background_color;
+    visuals.panel_fill = panel_color;
+    visuals.override_text_color = Some(text_color);
+    visuals.hyperlink_color = accent_color;
+    visuals.faint_bg_color = background_color;
+    visuals.extreme_bg_color = egui::Color32::from_gray(230);
+    visuals.window_stroke = egui::Stroke::new(1.0, separator_color);
+    visuals.selection.bg_fill = accent_color.linear_multiply(0.3);
+    visuals.selection.stroke = egui::Stroke::new(1.0, text_color);
+
+    let widget_visuals = &mut visuals.widgets;
+    widget_visuals.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
+    widget_visuals.noninteractive.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_color);
+
+    widget_visuals.inactive.bg_fill = egui::Color32::from_gray(235);
+    widget_visuals.inactive.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.inactive.fg_stroke = egui::Stroke::new(1.0, text_color);
+
+    widget_visuals.hovered.bg_fill = egui::Color32::from_gray(220);
+    widget_visuals.hovered.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.hovered.fg_stroke = egui::Stroke::new(1.0, text_color);
+
+    widget_visuals.active.bg_fill = egui::Color32::from_gray(210);
+    widget_visuals.active.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.active.fg_stroke = egui::Stroke::new(1.0, accent_color);
+
+    visuals
+}
+
+// --- ダークモードのVisualsを返す関数 ---
+pub fn dark_visuals() -> egui::Visuals {
+    let mut visuals = egui::Visuals::dark();
+    let background_color = egui::Color32::from_rgb(29, 29, 31);
+    let panel_color = egui::Color32::from_rgb(44, 44, 46);
+    let text_color = egui::Color32::from_gray(230);
+    let accent_color = egui::Color32::from_rgb(10, 132, 255);
+    let separator_color = egui::Color32::from_gray(58);
+
+    visuals.window_fill = background_color;
+    visuals.panel_fill = panel_color;
+    visuals.override_text_color = Some(text_color);
+    visuals.hyperlink_color = accent_color;
+    visuals.faint_bg_color = background_color;
+    visuals.extreme_bg_color = egui::Color32::from_gray(60);
+    visuals.window_stroke = egui::Stroke::new(1.0, separator_color);
+    visuals.selection.bg_fill = accent_color.linear_multiply(0.3);
+    visuals.selection.stroke = egui::Stroke::new(1.0, text_color);
+
+    let widget_visuals = &mut visuals.widgets;
+    widget_visuals.noninteractive.bg_fill = egui::Color32::from_rgb(40, 40, 40);
+    widget_visuals.noninteractive.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_color);
+
+    widget_visuals.inactive.bg_fill = egui::Color32::from_gray(50);
+    widget_visuals.inactive.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 180, 180));
+
+    widget_visuals.hovered.bg_fill = egui::Color32::from_gray(70);
+    widget_visuals.hovered.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.hovered.fg_stroke = egui::Stroke::new(1.0, text_color);
+
+    widget_visuals.active.bg_fill = egui::Color32::from_gray(85);
+    widget_visuals.active.bg_stroke = egui::Stroke::NONE;
+    widget_visuals.active.fg_stroke = egui::Stroke::new(1.0, accent_color);
+
+    visuals
 }
 
 // eframe::Appトレイトを実装する構造体
@@ -141,23 +243,17 @@ impl NostrStatusApp {
         // --- フォント設定 ---
         let mut fonts = egui::FontDefinitions::default();
 
-        // **LINE Seed JPを読み込む**
-        // `LINESeedJP_TTF_Rg.ttf` はダウンロードしたフォントファイル名に合わせてください。
-        // 例えば `LINESeedJP_TTF_Bd.ttf` (Bold) など、他のウェイトも追加できます。
         fonts.font_data.insert(
             "LINESeedJP".to_owned(),
             egui::FontData::from_static(include_bytes!("../assets/fonts/LINESeedJP_TTF_Rg.ttf")).into(),
         );
 
-        // **Proportional（可変幅）フォントファミリーにLINESeedJPを最優先で追加**
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
             .insert(0, "LINESeedJP".to_owned());
 
-        // **Monospace（等幅）フォントファミリーにもLINESeedJPを追加**
-        // 必要に応じて、コーディングフォントなど別の等幅フォントを優先することも可能です。
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
@@ -166,63 +262,17 @@ impl NostrStatusApp {
 
         _cc.egui_ctx.set_fonts(fonts);
 
-        // --- モダンなmacOS風デザインのためのスタイル調整 ---
-        style.visuals = egui::Visuals::light(); // ライトモードを基準にする
+        // --- スタイル調整 ---
+        style.visuals = light_visuals(); // ライトモードを基準にする
 
-        // カラーパレット
-        let background_color = egui::Color32::from_rgb(242, 242, 247); // macOSのウィンドウ背景色に近い
-        let panel_color = egui::Color32::from_rgb(255, 255, 255); // パネルは白
-        let text_color = egui::Color32::BLACK;
-        let accent_color = egui::Color32::from_rgb(0, 110, 230); // 少し落ち着いた青
-        let separator_color = egui::Color32::from_gray(225);
-
-        // 全体的なビジュアル設定
-        style.visuals.window_fill = background_color;
-        style.visuals.panel_fill = panel_color; // 中央パネルなどの背景色
-        style.visuals.override_text_color = Some(text_color);
-        style.visuals.hyperlink_color = accent_color;
-        style.visuals.faint_bg_color = background_color; // ボタンなどの背景に使われる
-        style.visuals.extreme_bg_color = egui::Color32::from_gray(230); // テキスト編集フィールドなどの背景
-
-        // ウィジェットのスタイル
-        let widget_visuals = &mut style.visuals.widgets;
-
-        // 角丸の設定
+        // 角丸やテキストスタイルは共通で設定
         let corner_radius = 6.0;
-        widget_visuals.noninteractive.corner_radius = corner_radius.into();
-        widget_visuals.inactive.corner_radius = corner_radius.into();
-        widget_visuals.hovered.corner_radius = corner_radius.into();
-        widget_visuals.active.corner_radius = corner_radius.into();
-        widget_visuals.open.corner_radius = corner_radius.into();
+        style.visuals.widgets.noninteractive.corner_radius = corner_radius.into();
+        style.visuals.widgets.inactive.corner_radius = corner_radius.into();
+        style.visuals.widgets.hovered.corner_radius = corner_radius.into();
+        style.visuals.widgets.active.corner_radius = corner_radius.into();
+        style.visuals.widgets.open.corner_radius = corner_radius.into();
 
-        // 非インタラクティブなウィジェット（ラベルなど）
-        widget_visuals.noninteractive.bg_fill = egui::Color32::TRANSPARENT; // 背景なし
-        widget_visuals.noninteractive.bg_stroke = egui::Stroke::NONE; // 枠線なし
-        widget_visuals.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_color); // テキストの色
-
-        // 非アクティブなウィジェット（ボタンなど）
-        widget_visuals.inactive.bg_fill = egui::Color32::from_gray(235);
-        widget_visuals.inactive.bg_stroke = egui::Stroke::NONE;
-        widget_visuals.inactive.fg_stroke = egui::Stroke::new(1.0, text_color);
-
-        // ホバー時のウィジェット
-        widget_visuals.hovered.bg_fill = egui::Color32::from_gray(220);
-        widget_visuals.hovered.bg_stroke = egui::Stroke::NONE;
-        widget_visuals.hovered.fg_stroke = egui::Stroke::new(1.0, text_color);
-
-        // アクティブなウィジェット（クリック中）
-        widget_visuals.active.bg_fill = egui::Color32::from_gray(210);
-        widget_visuals.active.bg_stroke = egui::Stroke::NONE;
-        widget_visuals.active.fg_stroke = egui::Stroke::new(1.0, accent_color);
-
-        // テキスト選択
-        style.visuals.selection.bg_fill = accent_color.linear_multiply(0.3); // 少し薄いアクセントカラー
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, text_color);
-
-        // ウィンドウとパネルのストローク
-        style.visuals.window_stroke = egui::Stroke::new(1.0, separator_color);
-
-        // テキストスタイル
         style.text_styles = [
             (egui::TextStyle::Heading, egui::FontId::new(20.0, egui::FontFamily::Proportional)),
             (egui::TextStyle::Body, egui::FontId::new(13.0, egui::FontFamily::Proportional)),
@@ -256,6 +306,7 @@ impl NostrStatusApp {
             nip65_relays: Vec::new(),
             discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
             default_relays_editor: "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
+            current_theme: AppTheme::Light,
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 

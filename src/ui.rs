@@ -8,9 +8,10 @@ use std::path::Path;
 use std::collections::{HashSet, HashMap};
 
 use crate::{
-    NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay,
+    NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay, AppTheme,
     CONFIG_FILE, MAX_STATUS_LENGTH, CACHE_DIR, Cache,
-    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list
+    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list,
+    light_visuals, dark_visuals,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
@@ -310,7 +311,7 @@ impl eframe::App for NostrStatusApp {
             inner_margin: Margin::same(12),
             corner_radius: 8.0.into(),
             shadow: eframe::epaint::Shadow::NONE,
-            fill: egui::Color32::from_white_alpha(250),
+            fill: app_data.current_theme.card_background_color(),
             ..Default::default()
         };
 
@@ -319,7 +320,25 @@ impl eframe::App for NostrStatusApp {
             .min_width(220.0)
             .show(ctx, |ui| {
                 ui.add_space(5.0);
-                ui.heading("N");
+
+                ui.horizontal(|ui| {
+                    ui.heading("N");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (icon, new_theme) = match app_data.current_theme {
+                            AppTheme::Light => ("☀️", AppTheme::Dark),
+                            AppTheme::Dark => ("🌙", AppTheme::Light),
+                        };
+                        if ui.button(icon).clicked() {
+                            app_data.current_theme = new_theme;
+                            let new_visuals = match new_theme {
+                                AppTheme::Light => light_visuals(),
+                                AppTheme::Dark => dark_visuals(),
+                            };
+                            ctx.set_visuals(new_visuals);
+                        }
+                    });
+                });
+
                 ui.add_space(15.0);
 
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
@@ -786,7 +805,7 @@ impl eframe::App for NostrStatusApp {
                                                             let pubkey = post.author_pubkey.to_bech32().unwrap_or_default();
                                                             format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len()-4..])
                                                         };
-                                                        ui.label(egui::RichText::new(display_name).strong());
+                                                        ui.label(egui::RichText::new(display_name).strong().color(app_data.current_theme.text_color()));
 
                                                         // --- Timestamp ---
                                                         let created_at_datetime = chrono::DateTime::from_timestamp(post.created_at.as_i64(), 0).unwrap();
@@ -809,7 +828,7 @@ impl eframe::App for NostrStatusApp {
                                                         }
                                                     });
                                                     ui.add_space(5.0);
-                                                    ui.add(egui::Label::new(&post.content).wrap());
+                                                    ui.add(egui::Label::new(egui::RichText::new(&post.content).color(app_data.current_theme.text_color())).wrap());
                                                 });
                                                 ui.add_space(10.0);
                                             }
