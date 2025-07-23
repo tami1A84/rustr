@@ -47,6 +47,10 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
     ```bash
     cargo run
     ```
+   **本番環境向けに最適化されたビルドを実行する場合は、次のコマンドを使用します:**
+    ```bash
+    cargo run --release
+    ```
 3.  **GUIウィンドウが開きます。画面の指示に従って、初回設定とステータス投稿を行ってください。**
 
     > **リレーに関する注記 (NIP-65):**
@@ -103,7 +107,11 @@ Logs are displayed in the terminal, not in the side panel.
     ```bash
     cargo run
     ```
-3.  **The GUI window will open. Follow the on-screen instructions for setup and status posting.**
+    **To execute a build optimized for production environments, use the following command:**
+    ```bash
+    cargo run --release
+    ```
+4.  **The GUI window will open. Follow the on-screen instructions for setup and status posting.**
 
     > **Note on Relays (NIP-65):**
     > If you have published a relay list with NIP-65, the application will automatically use those relays for posting. If not, it will connect to default relays.
