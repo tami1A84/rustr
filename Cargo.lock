@@ -29,6 +29,7 @@ dependencies = [
  "nostr-types",
  "pbkdf2",
  "rand 0.8.5",
+ "regex",
  "resvg",
  "rpassword 2.1.0",
  "serde",

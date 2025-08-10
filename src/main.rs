@@ -93,6 +93,8 @@ pub struct TimelinePost {
     pub author_metadata: ProfileMetadata,
     pub content: String,
     pub created_at: nostr::Timestamp,
+    #[serde(default)]
+    pub emojis: HashMap<String, String>, // shortcode -> url
 }
 
 // アプリケーションの内部状態を保持する構造体

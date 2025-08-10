@@ -1,4 +1,5 @@
 use eframe::{egui::{self, Margin}};
+use regex::Regex;
 use nostr::{EventBuilder, Filter, Kind, Keys, PublicKey, Tag};
 use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
 use std::time::Duration;
@@ -277,11 +278,20 @@ async fn fetch_timeline_posts(
 
             // 3e. ステータスとメタデータをマージ
             for event in status_events {
+                let emojis = event.tags.iter().filter_map(|tag| {
+                    if let Tag::Emoji { shortcode, url } = tag {
+                        Some((shortcode.clone(), url.to_string()))
+                    } else {
+                        None
+                    }
+                }).collect();
+
                 timeline_posts.push(TimelinePost {
                     author_pubkey: event.pubkey,
                     author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
                     content: event.content.clone(),
                     created_at: event.created_at,
+                    emojis,
                 });
             }
             timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
@@ -289,6 +299,71 @@ async fn fetch_timeline_posts(
         temp_fetch_client.shutdown().await?;
     }
     Ok(timeline_posts)
+}
+
+
+fn render_post_content(
+    ui: &mut egui::Ui,
+    app_data: &mut crate::NostrStatusAppInternal,
+    post: &TimelinePost,
+    urls_to_load: &mut Vec<String>,
+) {
+    let re = Regex::new(r":(\w+):").unwrap();
+    let mut last_end = 0;
+    let text_color = app_data.current_theme.text_color();
+
+    ui.horizontal_wrapped(|ui| {
+        for cap in re.captures_iter(&post.content) {
+            let full_match = cap.get(0).unwrap();
+            let shortcode = cap.get(1).unwrap().as_str();
+
+            // Render text before the emoji
+            let pre_text = &post.content[last_end..full_match.start()];
+            if !pre_text.is_empty() {
+                ui.label(egui::RichText::new(pre_text).color(text_color));
+            }
+
+            // Render the emoji
+            if let Some(url) = post.emojis.get(shortcode) {
+                let emoji_size = egui::vec2(20.0, 20.0);
+                let url_key = url.to_string();
+
+                match app_data.image_cache.get(&url_key) {
+                    Some(ImageState::Loaded(texture_handle)) => {
+                        let image_widget = egui::Image::new(texture_handle)
+                            .fit_to_exact_size(emoji_size);
+                        ui.add(image_widget);
+                    }
+                    Some(ImageState::Loading) => {
+                        let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
+                        ui.put(rect, egui::Spinner::new());
+                    }
+                    Some(ImageState::Failed) => {
+                        let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "💔".to_string(), egui::FontId::default(), ui.visuals().error_fg_color);
+                    }
+                    None => {
+                        if !urls_to_load.contains(&url_key) {
+                           urls_to_load.push(url_key.clone());
+                        }
+                        let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
+                        ui.put(rect, egui::Spinner::new());
+                    }
+                }
+            } else {
+                // If shortcode not found, render it as text
+                ui.label(egui::RichText::new(full_match.as_str()).color(text_color));
+            }
+
+            last_end = full_match.end();
+        }
+
+        // Render remaining text after the last emoji
+        let remaining_text = &post.content[last_end..];
+        if !remaining_text.is_empty() {
+            ui.label(egui::RichText::new(remaining_text).color(text_color));
+        }
+    });
 }
 
 
@@ -797,11 +872,19 @@ impl eframe::App for NostrStatusApp {
 
                                                 // 5. ステータスとメタデータをマージ
                                                 for event in status_events {
+                                                    let emojis = event.tags.iter().filter_map(|tag| {
+                                                        if let Tag::Emoji { shortcode, url } = tag {
+                                                            Some((shortcode.clone(), url.to_string()))
+                                                        } else {
+                                                            None
+                                                        }
+                                                    }).collect();
                                                     timeline_posts.push(TimelinePost {
                                                         author_pubkey: event.pubkey,
                                                         author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
                                                         content: event.content.clone(),
                                                         created_at: event.created_at,
+                                                        emojis,
                                                     });
                                                 }
                                             }
@@ -841,7 +924,8 @@ impl eframe::App for NostrStatusApp {
                                         if app_data.timeline_posts.is_empty() {
                                             ui.label(no_timeline_message_text);
                                         } else {
-                                            for post in &app_data.timeline_posts {
+                                            let posts_clone = app_data.timeline_posts.clone();
+                                            for post in &posts_clone {
                                                 card_frame.show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         // --- Profile Picture ---
@@ -912,7 +996,8 @@ impl eframe::App for NostrStatusApp {
                                                         }
                                                     });
                                                     ui.add_space(5.0);
-                                                    ui.add(egui::Label::new(egui::RichText::new(&post.content).color(app_data.current_theme.text_color())).wrap());
+                                                    // Custom emoji rendering
+                                                    render_post_content(ui, &mut app_data, post, &mut urls_to_load);
                                                 });
                                                 ui.add_space(10.0);
                                             }
