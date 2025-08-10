@@ -27,6 +27,8 @@ epaint = "0.32.0"
 egui = "0.32.0"
 env_logger = "0.10"
 egui_extras = { version = "0.32.0", features = ["all_loaders", "http"] }
+ehttp = "0.5.0"
+image = { version = "0.25", features = ["png", "jpeg"] }
 resvg = "0.45"
 usvg = "0.45"
 fluent = "0.16"
