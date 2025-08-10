@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+nostr-lmdb = "0.39.0"
+heed = "0.20"
 nostr = "0.30"
 nostr-sdk = "0.30"
 nostr-types = "0.4.0"
