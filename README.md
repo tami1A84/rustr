@@ -6,10 +6,10 @@
 
 ## 概要
 
-現代のSNSは会話が中心となり、望まない会話を目にすることも少なくありません。
-このアプリケーションは、Twitterの原点であるシンプルな「ステータス共有」に回帰するために作成されました。
-NIP-38を利用してあなたのステータスを投稿するための、シンプルなGUIアプリケーションです。
-ログはサイドパネルではなく、ターミナルに表示されます。
+現代のSNSは会話が中心となり、望まない会話や過剰な情報に疲れることも少なくありません。
+このアプリケーションは、Twitterの原点である「〇〇なう」を共有するシンプルな体験に回帰するために作成されました。
+投稿はNIP-38（`kind:30315`）を利用します。これはリプレイスブル（上書き可能）なイベントで、永続的な記録ではなく、一時的な「ステータス」の共有に最適な仕組みです。
+このアプリは、リプライや「いいね」といったソーシャルな機能を取り除き、純粋なステータス共有の場を提供します。
 
 ## スクリーンショット
 
@@ -20,21 +20,26 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
 
 ## 特徴
 
-*   **洗練されたUI:** LINE Seed JPフォントを採用し、モダンなmacOS風のデザインで、直感的な操作が可能です。
-*   **ステータス投稿 (NIP-38):** あなたの現在の状況を簡単に投稿できます。
+*   **洗練されたUI:** `egui`とLINE Seed JPフォントを採用し、モダンなmacOS風のデザインで、ライトモードとダークモードの両方に対応しています。
+*   **ステータス投稿 (NIP-38):** NIP-38 (`kind:30315`) を使用して、あなたの現在の「ステータス」を簡単に投稿できます。これは上書き可能なイベントのため、常に最新の状況を共有できます。
 *   **プロフィールの表示と編集 (NIP-01):** Nostrのプロフィール情報を表示し、編集することができます。
-*   **安全な鍵管理 (NIP-49):** 秘密鍵はパスフレーズで暗号化（ChaCha20Poly1305）され、ローカルに保存されます。起動時にパスフレーズの入力が求められます。
-*   **自動的なリレー接続とステータス取得:** ログイン時にあなたのリレーリスト（NIP-65）に自動で接続し、フォローしているユーザーのリスト（NIP-02）と最新のステータス（NIP-38）を取得して表示します。
-*   **高度なリレーリスト管理 (NIP-65):** アプリから直接リレーリストを閲覧、編集、公開できます。リレーの追加や削除、読み書きの権限設定が可能です。さらに、フォローしているユーザーのリレーリストをインポートする機能もあります。
+*   **安全な鍵管理 (NIP-49):** 秘密鍵はローカルに保存されます。あなたのパスフレーズからPBKDF2で導出された鍵を使い、ChaCha20Poly1305で暗号化されるため安全です。
+*   **高度なリレー管理と投稿取得 (NIP-65, NIP-02):**
+    *   **あなたのリレー:** ログイン時にあなたのNIP-65リレーリストに自動接続します。リストがない場合はデフォルトリレーを使用します。
+    *   **投稿の取得:** フォローしているユーザー(NIP-02)のNIP-65リレーリストを別途取得し、そこからステータス投稿を検索することで、取りこぼしの少ないタイムラインを実現します。
+    *   **リレーリストの編集:** アプリ内からリレーの追加・削除、読み書き権限の設定、NIP-65リストの公開が可能です。
+*   **効率的なキャッシュ機構:** プロフィール、フォローリスト、リレーリスト、タイムラインなどをLMDB（ローカルデータベース）にキャッシュすることで、2回目以降の起動とデータ表示を高速化します。
 *   **タブ形式のインターフェース:** ホーム（タイムラインと投稿）、リレー、プロフィールのタブで簡単に機能を切り替えられます。
-*   **パフォーマンス:** プロフィール情報やリレーリストなどをキャッシュすることで、次回の起動を高速化します。
-*   **会話機能の排除:** このツールはステータス投稿専用です。リプライやメンションなどの会話機能はありません。
+*   **会話機能の排除:** このツールはステータス投稿専用です。リプライ、メンション、リアクションなどの会話機能は一切ありません。
 
 ## 技術スタック
 
-*   [rust-nostr](https://docs.rs/nostr/latest/nostr/index.html)
-*   [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)
-*   [egui](https://github.com/emilk/egui)
+*   **言語:** [Rust](https://www.rust-lang.org/)
+*   **GUI:** [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) / [egui](https://github.com/emilk/egui)
+*   **Nostrプロトコル:** [nostr-sdk](https://github.com/nostr-protocol/nostr-sdk) / [rust-nostr](https://github.com/rust-nostr/nostr)
+*   **非同期処理:** [Tokio](https://tokio.rs/)
+*   **データベース:** [LMDB](https://www.symas.com/lmdb) (via [heed](https://github.com/meilisearch/heed))
+*   **暗号化:** [chacha20poly1305](https://crates.io/crates/chacha20poly1305), [pbkdf2](https://crates.io/crates/pbkdf2)
 
 ## インストール & 使い方
 
@@ -62,14 +67,14 @@ NIP-38を利用してあなたのステータスを投稿するための、シ�
 
 [日本語](#n) | [English](#n-1)
 
-**Nostr a simple status sharing application to eliminate conversation.**
+**A simple Nostr application for sharing your status, not for conversation.**
 
 ## Abstract
 
-In today's social networking services, the focus is on conversation, and it is not uncommon to see conversations that are not desired.
-This application was created to bring back the simple "status sharing" of the early days of Twitter, rather than the conversational aspect of Twitter.
-This application is a simple GUI application that allows you to post your status using NIP-38.
-Logs are displayed in the terminal, not in the side panel.
+Modern social networks are centered around conversation, often leading to information overload and unwanted interactions.
+This application is a return to the simple "What are you doing?" experience of early Twitter.
+It uses NIP-38 (`kind:30315`), a replaceable event ideal for sharing temporary "statuses" rather than permanent posts.
+This app removes social features like replies and likes to provide a pure status-sharing platform.
 
 ## Screenshot
 
@@ -80,21 +85,26 @@ Logs are displayed in the terminal, not in the side panel.
 
 ## Features
 
-*   **Sophisticated UI:** A modern, macOS-inspired design with the LINE Seed JP font for intuitive operation.
-*   **Post Status Updates (NIP-38):** Easily post your current status.
+*   **Sophisticated UI:** A modern, macOS-inspired design using `egui` and the LINE Seed JP font, with both light and dark modes.
+*   **Post Status Updates (NIP-38):** Easily post your current "status" using NIP-38 (`kind:30315`). As a replaceable event, you can always share your latest update.
 *   **Profile Display and Editing (NIP-01):** View and edit your Nostr profile information.
-*   **Secure Key Management (NIP-49):** Your secret key is encrypted (ChaCha20Poly1305) with a passphrase and stored locally. You will be prompted for the passphrase at startup.
-*   **Automatic Relay Connection and Status Retrieval:** On login, the application automatically connects to your relay list (NIP-65), retrieves your follow list (NIP-02), and displays the latest statuses (NIP-38).
-*   **Advanced Relay List Management (NIP-65):** View, edit, and publish your relay list directly from the app. You can add or remove relays, set read/write preferences, and even import relay lists from users you follow.
+*   **Secure Key Management (NIP-49):** Your secret key is stored locally and securely, encrypted with ChaCha20Poly1305 using a key derived from your passphrase via PBKDF2.
+*   **Advanced Relay Management & Post Fetching (NIP-65, NIP-02):**
+    *   **Your Relays:** Automatically connects to your NIP-65 relay list on login, or falls back to default relays if none is found.
+    *   **Post Fetching:** Achieves a more complete timeline by fetching the NIP-65 relay lists of users you follow (NIP-02) and searching for their statuses there.
+    *   **Relay List Editing:** Add, remove, set read/write permissions, and publish your NIP-65 list directly from within the app.
+*   **Efficient Caching:** Caches profiles, follow lists, relay lists, and timelines in a local LMDB database for significantly faster startup and data loading on subsequent launches.
 *   **Tabbed Interface:** Easily switch between functions with tabs for Home (Timeline & Posting), Relays, and Profile.
-*   **Performance:** Caches profile information and relay lists to speed up subsequent launches.
-*   **No Conversation Features:** This tool is for posting statuses only. There are no replies, mentions, or other conversational features.
+*   **No Conversation Features:** This tool is for posting statuses only. There are no replies, mentions, reactions, or other conversational features.
 
 ## Technical Stacks
 
-*   [rust-nostr](https://docs.rs/nostr/latest/nostr/index.html)
-*   [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)
-*   [egui](https://github.com/emilk/egui)
+*   **Language:** [Rust](https://www.rust-lang.org/)
+*   **GUI:** [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) / [egui](https://github.com/emilk/egui)
+*   **Nostr Protocol:** [nostr-sdk](https://github.com/nostr-protocol/nostr-sdk) / [rust-nostr](https://github.com/rust-nostr/nostr)
+*   **Asynchronous Runtime:** [Tokio](https://tokio.rs/)
+*   **Database:** [LMDB](https://www.symas.com/lmdb) (via [heed](https://github.com/meilisearch/heed))
+*   **Cryptography:** [chacha20poly1305](https://crates.io/crates/chacha20poly1305), [pbkdf2](https://crates.io/crates/pbkdf2)
 
 ## Installation & Usage
 
