@@ -843,16 +843,17 @@ impl eframe::App for NostrStatusApp {
                                                     ui.horizontal(|ui| {
                                                         // --- Profile Picture ---
                                                         let avatar_size = egui::vec2(32.0, 32.0);
+                                                        let corner_radius = 4.0;
                                                         if !post.author_metadata.picture.is_empty() {
                                                             ui.add(
                                                                 egui::Image::from_uri(&post.author_metadata.picture)
-                                                                    .corner_radius(avatar_size.x / 2.0)
+                                                                    .corner_radius(corner_radius)
                                                                     .fit_to_exact_size(avatar_size)
                                                             );
                                                         } else {
                                                             // フォールバックとして四角いスペースを表示
                                                             let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
-                                                            ui.painter().rect_filled(rect, avatar_size.x / 2.0, ui.style().visuals.widgets.inactive.bg_fill);
+                                                            ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
                                                         }
 
                                                         ui.add_space(8.0); // アイコンと名前の間のスペース
