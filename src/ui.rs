@@ -9,22 +9,16 @@ use std::collections::{HashSet, HashMap};
 
 use crate::{
     NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay, AppTheme,
-    CONFIG_FILE, MAX_STATUS_LENGTH, CACHE_DIR, Cache,
+    CONFIG_FILE, MAX_STATUS_LENGTH, Cache,
     connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list,
     light_visuals, dark_visuals,
+    cache_db::{LmdbCache, DB_PROFILES, DB_FOLLOWED, DB_RELAYS, DB_TIMELINE},
 };
-use serde::{de::DeserializeOwned, Serialize};
-use std::io::{Read, Write};
+use serde::de::DeserializeOwned;
+use std::io::Read;
 
-// --- データ取得とUI更新のための構造体 ---
-// `InitialData`は`FreshData`に置き換えられたため、削除
-
-// --- Cache Helper Functions ---
-fn get_cache_path(pubkey: &str, filename: &str) -> std::path::PathBuf {
-    Path::new(CACHE_DIR).join(pubkey).join(filename)
-}
-
-fn read_cache<T: DeserializeOwned>(path: &Path) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
+// --- Migration Helper ---
+fn read_file_cache<T: DeserializeOwned>(path: &Path) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = fs::File::open(path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
@@ -32,17 +26,84 @@ fn read_cache<T: DeserializeOwned>(path: &Path) -> Result<Cache<T>, Box<dyn std:
     Ok(cache)
 }
 
-fn write_cache<T: Serialize>(path: &Path, data: &T) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+pub async fn migrate_data_from_files(
+    cache_db: &LmdbCache,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cache_dir = Path::new(crate::CACHE_DIR);
+    if !cache_dir.exists() {
+        println!("Old cache directory not found, no migration needed.");
+        return Ok(());
     }
-    let cache = Cache::new(data);
-    let json = serde_json::to_string_pretty(&cache)?;
-    let mut file = fs::File::create(path)?;
-    file.write_all(json.as_bytes())?;
+
+    println!("Starting migration from file-based cache to LMDB...");
+
+    for entry in fs::read_dir(cache_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(pubkey_hex) = path.file_name().and_then(|s| s.to_str()) {
+                if pubkey_hex.ends_with("_migrated") {
+                    continue;
+                }
+                println!("Migrating data for pubkey: {}", pubkey_hex);
+
+                // Migrate followed_pubkeys.json
+                let followed_path = path.join("followed_pubkeys.json");
+                if followed_path.exists() {
+                    if let Ok(cache) = read_file_cache::<HashSet<PublicKey>>(&followed_path) {
+                        if let Err(e) = cache_db.write_cache(DB_FOLLOWED, pubkey_hex, &cache.data) {
+                            eprintln!("Failed to migrate followed_pubkeys for {}: {}", pubkey_hex, e);
+                        }
+                    }
+                }
+
+                // Migrate nip65_relays.json
+                let relays_path = path.join("nip65_relays.json");
+                if relays_path.exists() {
+                    if let Ok(cache) = read_file_cache::<Vec<(String, Option<String>)>>(&relays_path) {
+                        if let Err(e) = cache_db.write_cache(DB_RELAYS, pubkey_hex, &cache.data) {
+                            eprintln!("Failed to migrate nip65_relays for {}: {}", pubkey_hex, e);
+                        }
+                    }
+                }
+
+                // Migrate my_profile.json
+                let profile_path = path.join("my_profile.json");
+                if profile_path.exists() {
+                    if let Ok(cache) = read_file_cache::<ProfileMetadata>(&profile_path) {
+                         if let Err(e) = cache_db.write_cache(DB_PROFILES, pubkey_hex, &cache.data) {
+                            eprintln!("Failed to migrate profile for {}: {}", pubkey_hex, e);
+                        }
+                    }
+                }
+
+                // Migrate timeline_posts.json
+                let timeline_path = path.join("timeline_posts.json");
+                if timeline_path.exists() {
+                    if let Ok(cache) = read_file_cache::<Vec<TimelinePost>>(&timeline_path) {
+                        if let Err(e) = cache_db.write_cache(DB_TIMELINE, pubkey_hex, &cache.data) {
+                            eprintln!("Failed to migrate timeline for {}: {}", pubkey_hex, e);
+                        }
+                    }
+                }
+
+                // Rename the directory to mark it as migrated
+                let migrated_path = path.with_file_name(format!("{}_migrated", pubkey_hex));
+                if let Err(e) = fs::rename(&path, &migrated_path) {
+                    eprintln!("Failed to rename migrated directory for {}: {}", pubkey_hex, e);
+                } else {
+                    println!("Finished migrating and renamed directory for pubkey: {}", pubkey_hex);
+                }
+            }
+        }
+    }
+    println!("Migration complete.");
     Ok(())
 }
 
+
+// --- データ取得とUI更新のための構造体 ---
+// `InitialData`は`FreshData`に置き換えられたため、削除
 
 // --- データ取得ロジック ---
 
@@ -54,18 +115,16 @@ struct CachedData {
     timeline_posts: Vec<TimelinePost>, // タイムラインもキャッシュから読む
 }
 
-fn load_data_from_cache(pubkey_hex: &str) -> Result<CachedData, Box<dyn std::error::Error + Send + Sync>> {
+fn load_data_from_cache(
+    cache_db: &LmdbCache,
+    pubkey_hex: &str,
+) -> Result<CachedData, Box<dyn std::error::Error + Send + Sync>> {
     println!("Loading data from cache for pubkey: {}", pubkey_hex);
-    let followed_pubkeys_cache_path = get_cache_path(pubkey_hex, "followed_pubkeys.json");
-    let nip65_relays_cache_path = get_cache_path(pubkey_hex, "nip65_relays.json");
-    let profile_cache_path = get_cache_path(pubkey_hex, "my_profile.json");
-    let timeline_cache_path = get_cache_path(pubkey_hex, "timeline_posts.json"); // タイムラインキャッシュのパス
 
-    let followed_cache = read_cache::<HashSet<PublicKey>>(&followed_pubkeys_cache_path)?;
-    let nip65_cache = read_cache::<Vec<(String, Option<String>)>>(&nip65_relays_cache_path)?;
-    let profile_cache = read_cache::<ProfileMetadata>(&profile_cache_path)?;
-    // タイムラインキャッシュは存在しない場合もあるので `ok()` を使う
-    let timeline_cache = read_cache::<Vec<TimelinePost>>(&timeline_cache_path).ok();
+    let followed_cache = cache_db.read_cache::<HashSet<PublicKey>>(DB_FOLLOWED, pubkey_hex)?;
+    let nip65_cache = cache_db.read_cache::<Vec<(String, Option<String>)>>(DB_RELAYS, pubkey_hex)?;
+    let profile_cache = cache_db.read_cache::<ProfileMetadata>(DB_PROFILES, pubkey_hex)?;
+    let timeline_cache = cache_db.read_cache::<Vec<TimelinePost>>(DB_TIMELINE, pubkey_hex).ok();
 
     if followed_cache.is_expired() || nip65_cache.is_expired() || profile_cache.is_expired() {
         return Err("Cache expired".into());
@@ -76,7 +135,7 @@ fn load_data_from_cache(pubkey_hex: &str) -> Result<CachedData, Box<dyn std::err
         followed_pubkeys: followed_cache.data,
         nip65_relays: nip65_cache.data,
         profile_metadata: profile_cache.data,
-        timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data), // なければ空のVec
+        timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data),
     })
 }
 
@@ -96,12 +155,9 @@ async fn fetch_fresh_data_from_network(
     keys: &Keys,
     discover_relays: &str,
     default_relays: &str,
+    cache_db: &LmdbCache,
 ) -> Result<FreshData, Box<dyn std::error::Error + Send + Sync>> {
     let pubkey_hex = keys.public_key().to_string();
-    let followed_pubkeys_cache_path = get_cache_path(&pubkey_hex, "followed_pubkeys.json");
-    let nip65_relays_cache_path = get_cache_path(&pubkey_hex, "nip65_relays.json");
-    let profile_cache_path = get_cache_path(&pubkey_hex, "my_profile.json");
-    let timeline_cache_path = get_cache_path(&pubkey_hex, "timeline_posts.json");
 
     println!("Fetching fresh data from network...");
 
@@ -114,7 +170,7 @@ async fn fetch_fresh_data_from_network(
         default_relays
     ).await?;
     println!("Relay connection process finished.\n{}", log_message);
-    write_cache(&nip65_relays_cache_path, &fetched_nip65_relays)?;
+    cache_db.write_cache(DB_RELAYS, &pubkey_hex, &fetched_nip65_relays)?;
 
 
     // --- 2. フォローリスト取得 (NIP-02) ---
@@ -146,21 +202,21 @@ async fn fetch_fresh_data_from_network(
     if !received_nip02 {
         eprintln!("Failed to fetch contact list (timed out or not found).");
     } else {
-        write_cache(&followed_pubkeys_cache_path, &followed_pubkeys)?;
+        cache_db.write_cache(DB_FOLLOWED, &pubkey_hex, &followed_pubkeys)?;
     }
     println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
 
     // --- 3. タイムライン取得 ---
     let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
-    write_cache(&timeline_cache_path, &timeline_posts)?; // タイムラインもキャッシュに保存
+    cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
 
 
     // --- 4. 自身のNIP-01 プロフィールメタデータ取得 ---
     println!("Fetching NIP-01 profile metadata for self...");
     let (profile_metadata, profile_json_string) = fetch_nip01_profile(client, keys.public_key()).await?;
     println!("NIP-01 profile fetch for self finished.");
-    write_cache(&profile_cache_path, &profile_metadata)?;
+    cache_db.write_cache(DB_PROFILES, &pubkey_hex, &profile_metadata)?;
 
     Ok(FreshData {
         followed_pubkeys,
@@ -373,6 +429,7 @@ impl eframe::App for NostrStatusApp {
 
                                 if ui.button(egui::RichText::new(login_button_text).strong()).clicked() && !app_data.is_loading {
                                     let passphrase = app_data.passphrase_input.clone();
+                                    let cache_db_clone = app_data.cache_db.clone();
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
                                     let cloned_app_data_arc = app_data_arc_clone.clone();
@@ -403,7 +460,7 @@ impl eframe::App for NostrStatusApp {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
-                                            if let Ok(cached_data) = load_data_from_cache(&pubkey_hex) {
+                                            if let Ok(cached_data) = load_data_from_cache(&cache_db_clone, &pubkey_hex) {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.my_keys = Some(keys.clone());
                                                 app_data.nostr_client = Some(client.clone());
@@ -429,7 +486,7 @@ impl eframe::App for NostrStatusApp {
                                                 app_data.is_loading = true;
                                                 app_data.should_repaint = true;
                                             }
-                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
+                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
                                             if let Ok(fresh_data) = fresh_data_result {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.followed_pubkeys = fresh_data.followed_pubkeys;
@@ -500,6 +557,7 @@ impl eframe::App for NostrStatusApp {
                                     let secret_key_input = app_data.secret_key_input.clone();
                                     let passphrase = app_data.passphrase_input.clone();
                                     let confirm_passphrase = app_data.confirm_passphrase_input.clone();
+                                    let cache_db_clone = app_data.cache_db.clone();
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
                                     let cloned_app_data_arc = app_data_arc_clone.clone();
@@ -540,7 +598,7 @@ impl eframe::App for NostrStatusApp {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                                             };
-                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays).await;
+                                            let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
                                             if let Ok(fresh_data) = fresh_data_result {
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
                                                 app_data.my_keys = Some(keys);
@@ -840,6 +898,7 @@ impl eframe::App for NostrStatusApp {
                                     if !app_data.is_loading {
                                         let client = app_data.nostr_client.as_ref().unwrap().clone();
                                         let keys = app_data.my_keys.as_ref().unwrap().clone();
+                                        let cache_db_clone = app_data.cache_db.clone();
 
                                         app_data.is_loading = true;
                                         app_data.should_repaint = true;
@@ -853,8 +912,7 @@ impl eframe::App for NostrStatusApp {
                                                     // キャッシュも更新
                                                     if let Some(keys) = &app_data.my_keys {
                                                         let pubkey_hex = keys.public_key().to_string();
-                                                        let cache_path = get_cache_path(&pubkey_hex, "followed_pubkeys.json");
-                                                        if let Err(e) = write_cache(&cache_path, &app_data.followed_pubkeys) {
+                                                        if let Err(e) = cache_db_clone.write_cache(DB_FOLLOWED, &pubkey_hex, &app_data.followed_pubkeys) {
                                                             eprintln!("Failed to write follow list cache: {}", e);
                                                         }
                                                     }
@@ -893,6 +951,7 @@ impl eframe::App for NostrStatusApp {
                                         let keys_clone = app_data.my_keys.clone().unwrap();
                                         let discover_relays = app_data.discover_relays_editor.clone();
                                         let default_relays = app_data.default_relays_editor.clone();
+                                        let cache_db_clone = app_data.cache_db.clone();
 
                                         app_data.is_loading = true;
                                         app_data.should_repaint = true;
@@ -903,6 +962,11 @@ impl eframe::App for NostrStatusApp {
                                             match connect_to_relays_with_nip65(&client_clone, &keys_clone, &discover_relays, &default_relays).await {
                                                 Ok((log_message, fetched_nip65_relays)) => {
                                                     println!("Relay connection successful!\n{}", log_message);
+                                                    let pubkey_hex = keys_clone.public_key().to_string();
+                                                    if let Err(e) = cache_db_clone.write_cache(DB_RELAYS, &pubkey_hex, &fetched_nip65_relays) {
+                                                        eprintln!("Failed to write NIP-65 cache: {}", e);
+                                                    }
+
                                                     let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                                                     if let Some(pos) = log_message.find("--- 現在接続中のリレー ---") {
                                                         app_data_async.connected_relays_display = log_message[pos..].to_string();
@@ -1119,6 +1183,7 @@ impl eframe::App for NostrStatusApp {
                                         let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
                                         let keys_clone = app_data.my_keys.clone().unwrap();
                                         let editable_profile_clone = app_data.editable_profile.clone(); // 編集中のデータをクローン
+                                        let cache_db_clone = app_data.cache_db.clone();
 
                                         app_data.is_loading = true;
                                         app_data.should_repaint = true;
@@ -1137,6 +1202,13 @@ impl eframe::App for NostrStatusApp {
                                                 match client_clone.send_event(event).await {
                                                     Ok(event_id) => {
                                                         println!("NIP-01 profile published with event id: {}", event_id);
+
+                                                        // プロフィールをキャッシュに保存
+                                                        let pubkey_hex = keys_clone.public_key().to_string();
+                                                        if let Err(e) = cache_db_clone.write_cache(DB_PROFILES, &pubkey_hex, &editable_profile_clone) {
+                                                            eprintln!("Failed to write profile cache: {}", e);
+                                                        }
+
                                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                                                         app_data_async.profile_fetch_status = "Profile saved!".to_string();
                                                         app_data_async.nip01_profile_display = serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(&profile_content)?)?;
@@ -1223,6 +1295,3 @@ impl eframe::App for NostrStatusApp {
         }
     }
 }
-
-
-

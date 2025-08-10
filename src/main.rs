@@ -1,5 +1,6 @@
 mod ui;
 mod nostr_client;
+mod cache_db;
 
 use eframe::egui;
 use nostr::{Keys, PublicKey};
@@ -10,18 +11,15 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
-// NIP-49 (ChaCha20Poly1305) のための暗号クレート
-
-// PBKDF2のためのクレート
-
-// serde と serde_json を使って設定ファイルとNIP-01メタデータを構造体として定義
+use crate::cache_db::LmdbCache;
+use crate::ui::migrate_data_from_files;
+use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 
-use self::nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users};
-
 const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
-const CACHE_DIR: &str = "cache";
+const CACHE_DIR: &str = "cache"; // Kept for migration
+const DB_PATH: &str = "cache_db";
 const CACHE_TTL_SECONDS: i64 = 24 * 60 * 60; // 24 hours
 
 const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数
@@ -92,6 +90,7 @@ pub struct TimelinePost {
 
 // アプリケーションの内部状態を保持する構造体
 pub struct NostrStatusAppInternal {
+    pub cache_db: LmdbCache,
     pub is_logged_in: bool,
     pub status_message_input: String, // ユーザーが入力するステータス
     pub show_post_dialog: bool, // 投稿ダイアログの表示状態
@@ -283,7 +282,10 @@ impl NostrStatusApp {
 
         _cc.egui_ctx.set_style(style);
 
+        let lmdb_cache = LmdbCache::new(Path::new(DB_PATH)).expect("Failed to initialize LMDB cache");
+
         let app_data_internal = NostrStatusAppInternal {
+            cache_db: lmdb_cache,
             is_logged_in: false,
             status_message_input: String::new(),
             show_post_dialog: false,
@@ -313,11 +315,20 @@ impl NostrStatusApp {
         // egui_extrasの画像ローダーをインストール
         egui_extras::install_image_loaders(&_cc.egui_ctx);
 
-        // アプリケーション起動時に設定ファイルをチェック
+        // アプリケーション起動時にデータ移行と設定ファイルチェック
         let data_clone = data.clone();
         let runtime_handle = runtime.handle().clone();
 
         runtime_handle.spawn(async move {
+            // Run migration
+            let cache_db_clone = {
+                let app_data = data_clone.lock().unwrap();
+                app_data.cache_db.clone()
+            };
+            if let Err(e) = migrate_data_from_files(&cache_db_clone).await {
+                eprintln!("Data migration failed: {}", e);
+            }
+
             let mut app_data = data_clone.lock().unwrap();
             // println!("Checking config file...");
 
@@ -336,12 +347,6 @@ impl NostrStatusApp {
 fn main() -> eframe::Result<()> {
     env_logger::init(); // 必要に応じて有効化
 
-    // --- キャッシュディレクトリを作成 ---
-    let cache_dir = Path::new("cache");
-    if !cache_dir.exists() {
-        std::fs::create_dir_all(cache_dir).expect("Failed to create cache directory");
-    }
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 700.0]),
         ..Default::default()
@@ -353,6 +358,3 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Ok(Box::new(NostrStatusApp::new(cc)))),
     )
 }
-
-
-
