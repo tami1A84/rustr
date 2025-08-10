@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use nostr::{nips::nip19::ToBech32, Filter, Kind, Keys, PublicKey, Tag};
 use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
 use std::collections::HashSet;
@@ -18,14 +19,25 @@ pub async fn connect_to_relays_with_nip65(
     let discover_client = Client::with_opts(&*keys, client_opts.clone()); // A dedicated client for discovery
 
     let mut status_log = String::new();
-    status_log.push_str("NIP-65リレーリストを取得するためにDiscoverリレーに接続中...\n");
-    for relay_url in &bootstrap_relays {
-        if let Err(e) = discover_client.add_relay(relay_url.clone()).await { // Add to discover_client
-            status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n", relay_url, e));
-        } else {
-            status_log.push_str(&format!("  Discoverリレー追加: {}\n", relay_url));
+    status_log.push_str("NIP-65リレーリストを取得するためにDiscoverリレーに並列接続中...\n");
+
+    let add_relay_futures = bootstrap_relays.iter().map(|url| {
+        let discover_client = &discover_client;
+        let url = url.clone();
+        async move {
+            discover_client.add_relay(url.clone()).await.map(|_| url)
+        }
+    });
+
+    let results = join_all(add_relay_futures).await;
+    for (i, result) in results.into_iter().enumerate() {
+        let url = &bootstrap_relays[i];
+        match result {
+            Ok(_) => status_log.push_str(&format!("  Discoverリレー追加: {}\n", url)),
+            Err(e) => status_log.push_str(&format!("  Discoverリレー追加失敗: {} - エラー: {}\n", url, e)),
         }
     }
+
     discover_client.connect().await; // Connect discover_client
     tokio::time::sleep(Duration::from_secs(2)).await; // Discoverリレー接続安定待ち
 
@@ -85,30 +97,53 @@ pub async fn connect_to_relays_with_nip65(
     let mut connected_relays_map: std::collections::HashMap<String, nostr_sdk::RelayStatus> = std::collections::HashMap::new();
 
     if received_nip65_event && !nip65_relays.is_empty() {
-        status_log.push_str("\nNIP-65で検出されたリレーに接続中...\n");
+        status_log.push_str("\nNIP-65で検出されたリレーに並列接続中...\n");
         let _ = client.remove_all_relays().await;
 
-        for (url, policy) in nip65_relays.iter() {
-            if policy.as_deref() == Some("write") || policy.is_none() {
-                if let Err(e) = client.add_relay(url.as_str()).await {
-                    status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n", url, e));
-                } else {
-                    status_log.push_str(&format!("  リレー追加: {}\n", url));
-                }
+        let relays_to_add: Vec<_> = nip65_relays.iter()
+            .filter(|(_, policy)| policy.as_deref() == Some("write") || policy.is_none())
+            .map(|(url, _)| url.clone())
+            .collect();
+
+        let add_relay_futures = relays_to_add.iter().map(|url| {
+            let client = &client;
+            let url = url.clone();
+            async move {
+                client.add_relay(url.clone()).await.map(|_| url)
+            }
+        });
+
+        let results = join_all(add_relay_futures).await;
+        for result in results {
+            match result {
+                Ok(url) => status_log.push_str(&format!("  リレー追加: {}\n", url)),
+                Err(e) => status_log.push_str(&format!("  リレー追加失敗 - エラー: {}\n", e)), // URL might not be available on error
             }
         }
+
     } else {
-        status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに接続します。\n");
+        status_log.push_str("\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに並列接続します。\n");
         let _ = client.remove_all_relays().await;
 
-        let fallback_relays: Vec<String> = default_relays_str.lines().map(|s| s.to_string()).collect();
-        for relay_url in fallback_relays.iter() {
-            if !relay_url.trim().is_empty() {
-                if let Err(e) = client.add_relay(relay_url.trim()).await {
-                    status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", relay_url, e));
-                } else {
-                    status_log.push_str(&format!("  デフォルトリレー追加: {}\n", relay_url));
-                }
+        let fallback_relays: Vec<String> = default_relays_str.lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let add_relay_futures = fallback_relays.iter().map(|url| {
+            let client = &client;
+            let url = url.clone();
+            async move {
+                client.add_relay(url.clone()).await.map(|_| url)
+            }
+        });
+
+        let results = join_all(add_relay_futures).await;
+        for (i, result) in results.into_iter().enumerate() {
+            let url = &fallback_relays[i];
+            match result {
+                Ok(_) => status_log.push_str(&format!("  デフォルトリレー追加: {}\n", url)),
+                Err(e) => status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", url, e)),
             }
         }
     }
