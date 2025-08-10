@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+regex = "1"
 nostr-lmdb = "0.39.0"
 heed = "0.20"
 nostr = "0.30"
