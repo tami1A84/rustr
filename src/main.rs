@@ -7,7 +7,7 @@ use nostr::{Keys, PublicKey};
 use nostr_sdk::Client;
 
 use std::path::Path;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
@@ -78,6 +78,13 @@ pub struct EditableRelay {
     pub write: bool,
 }
 
+// 画像の読み込み状態を管理するenum
+#[derive(Clone)]
+pub enum ImageState {
+    Loading,
+    Loaded(egui::TextureHandle),
+    Failed,
+}
 
 // タイムラインの各投稿を表すための構造体
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +121,7 @@ pub struct NostrStatusAppInternal {
     pub discover_relays_editor: String,
     pub default_relays_editor: String,
     pub current_theme: AppTheme,
+    pub image_cache: HashMap<String, ImageState>,
 }
 
 // タブの状態を管理するenum
@@ -309,6 +317,7 @@ impl NostrStatusApp {
             discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
             default_relays_editor: "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
             current_theme: AppTheme::Light,
+            image_cache: HashMap::new(),
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 

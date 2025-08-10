@@ -6,10 +6,12 @@ use nostr::nips::nip19::ToBech32;
 use std::fs;
 use std::path::Path;
 use std::collections::{HashSet, HashMap};
+use ehttp;
+use image;
 
 use crate::{
     NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay, AppTheme,
-    CONFIG_FILE, MAX_STATUS_LENGTH, Cache,
+    CONFIG_FILE, MAX_STATUS_LENGTH, Cache, ImageState,
     connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list,
     light_visuals, dark_visuals,
     cache_db::{LmdbCache, DB_PROFILES, DB_FOLLOWED, DB_RELAYS, DB_TIMELINE},
@@ -833,6 +835,7 @@ impl eframe::App for NostrStatusApp {
                                 }
                                 ui.add_space(10.0);
                                 let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
+                                let mut urls_to_load = Vec::new();
                                 egui::ScrollArea::vertical().id_salt("timeline_scroll_area").max_height(ui.available_height() - 100.0).show(ui, |ui| {
                                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                                         if app_data.timeline_posts.is_empty() {
@@ -844,14 +847,36 @@ impl eframe::App for NostrStatusApp {
                                                         // --- Profile Picture ---
                                                         let avatar_size = egui::vec2(32.0, 32.0);
                                                         let corner_radius = 4.0;
-                                                        if !post.author_metadata.picture.is_empty() {
-                                                            ui.add(
-                                                                egui::Image::from_uri(&post.author_metadata.picture)
-                                                                    .corner_radius(corner_radius)
-                                                                    .fit_to_exact_size(avatar_size)
-                                                            );
+                                                        let url = &post.author_metadata.picture;
+
+                                                        if !url.is_empty() {
+                                                            let url_key = url.to_string();
+                                                            let image_state = app_data.image_cache.get(&url_key).cloned();
+
+                                                            match image_state {
+                                                                Some(ImageState::Loaded(texture_handle)) => {
+                                                                    let image_widget = egui::Image::new(&texture_handle)
+                                                                        .corner_radius(corner_radius)
+                                                                        .fit_to_exact_size(avatar_size);
+                                                                    ui.add(image_widget);
+                                                                }
+                                                                Some(ImageState::Loading) => {
+                                                                    let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                                                                    ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
+                                                                    ui.put(rect, egui::Spinner::new());
+                                                                }
+                                                                Some(ImageState::Failed) => {
+                                                                    let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                                                                    ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.error_fg_color.linear_multiply(0.2));
+                                                                }
+                                                                None => {
+                                                                    urls_to_load.push(url_key.clone());
+                                                                    let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                                                                    ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
+                                                                    ui.put(rect, egui::Spinner::new());
+                                                                }
+                                                            }
                                                         } else {
-                                                            // フォールバックとして四角いスペースを表示
                                                             let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
                                                             ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
                                                         }
@@ -894,6 +919,46 @@ impl eframe::App for NostrStatusApp {
                                         }
                                     });
                                 });
+
+                                for url_key in urls_to_load {
+                                    app_data.image_cache.insert(url_key.clone(), ImageState::Loading);
+                                    app_data.should_repaint = true;
+
+                                    let app_data_clone = self.data.clone();
+                                    let ctx_clone = ctx.clone();
+                                    let request = ehttp::Request::get(&url_key);
+
+                                    ehttp::fetch(request, move |result| {
+                                        let new_state = match result {
+                                            Ok(response) => {
+                                                if response.ok {
+                                                    match image::load_from_memory(&response.bytes) {
+                                                        Ok(dynamic_image) => {
+                                                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                                                [dynamic_image.width() as usize, dynamic_image.height() as usize],
+                                                                dynamic_image.to_rgba8().as_flat_samples().as_slice(),
+                                                            );
+                                                            let texture_handle = ctx_clone.load_texture(
+                                                                &response.url,
+                                                                color_image,
+                                                                Default::default()
+                                                            );
+                                                            ImageState::Loaded(texture_handle)
+                                                        }
+                                                        Err(_) => ImageState::Failed,
+                                                    }
+                                                } else {
+                                                    ImageState::Failed
+                                                }
+                                            }
+                                            Err(_) => ImageState::Failed,
+                                        };
+
+                                        let mut app_data = app_data_clone.lock().unwrap();
+                                        app_data.image_cache.insert(url_key, new_state);
+                                        ctx_clone.request_repaint();
+                                    });
+                                }
 
                                 if let Some((pubkey, follow)) = pubkey_to_modify {
                                     if !app_data.is_loading {
