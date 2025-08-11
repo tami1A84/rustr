@@ -72,11 +72,12 @@ pub async fn connect_to_relays_with_nip65(
                     if event.kind == Kind::RelayList && event.pubkey == keys.public_key() {
                         status_log.push_str("NIP-65リレーリストイベントを受信しました。\n");
                         for tag in event.tags.iter() {
-                            if let Some(nostr::TagStandard::Relay(url)) = tag.as_standardized() {
-                                let url_string = url.to_string();
-                                // The marker is not available in TagStandard::Relay anymore.
-                                // The policy needs to be determined by other means if necessary.
-                                nip65_relays.push((url_string, None));
+                            let tag_vec = tag.clone().to_vec();
+                            if tag_vec.get(0).map(|s| s.as_str()) == Some("r") {
+                                if let Some(url) = tag_vec.get(1) {
+                                    let policy = tag_vec.get(2).cloned();
+                                    nip65_relays.push((url.clone(), policy));
+                                }
                             }
                         }
                         received_nip65_event = true;
@@ -203,10 +204,11 @@ pub async fn fetch_relays_for_followed_users(
     let mut relay_urls = std::collections::HashSet::new();
     for event in events {
         for tag in event.tags.iter() {
-            if let Some(nostr::TagStandard::Relay(url)) = tag.as_standardized() {
-                // The marker is not available here, so we cannot filter by read/write.
-                // Adding all relays for now.
-                relay_urls.insert(url.to_string());
+            let tag_parts = tag.clone().to_vec();
+            if tag_parts.get(0).map(|s| s.as_str()) == Some("r") {
+                if let Some(url) = tag_parts.get(1) {
+                    relay_urls.insert(url.clone());
+                }
             }
         }
     }
