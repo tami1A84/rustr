@@ -1,27 +1,30 @@
-use eframe::{egui::{self, Margin}};
-use regex::Regex;
-use nostr::{EventBuilder, Filter, Kind, Keys, PublicKey, Tag};
-use nostr_sdk::{Client, Options, SubscribeAutoCloseOptions};
-use std::time::Duration;
+use eframe::egui::{self, Margin};
+// nostr v0.43.0 / nostr-sdk: RelayMetadata は nostr_sdk::nips::nip65 に移動したため import する
 use nostr::nips::nip19::ToBech32;
+use nostr::{EventBuilder, Filter, Keys, Kind, PublicKey, Tag};
+use nostr_sdk::nips::nip65::RelayMetadata;
+use nostr_sdk::{Client, ClientOptions as Options, RelayUrl, SubscribeAutoCloseOptions};
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::collections::{HashSet, HashMap};
-use ehttp;
-use image;
+use std::time::Duration;
 
 use crate::{
-    NostrStatusApp, AppTab, TimelinePost, ProfileMetadata, EditableRelay, AppTheme,
-    CONFIG_FILE, MAX_STATUS_LENGTH, Cache, ImageState,
-    connect_to_relays_with_nip65, fetch_nip01_profile, fetch_relays_for_followed_users, nostr_client::update_contact_list,
-    light_visuals, dark_visuals,
-    cache_db::{LmdbCache, DB_PROFILES, DB_FOLLOWED, DB_RELAYS, DB_TIMELINE},
+    AppTab, AppTheme, CONFIG_FILE, Cache, EditableRelay, ImageState, MAX_STATUS_LENGTH,
+    NostrStatusApp, ProfileMetadata, TimelinePost,
+    cache_db::{DB_FOLLOWED, DB_PROFILES, DB_RELAYS, DB_TIMELINE, LmdbCache},
+    connect_to_relays_with_nip65, dark_visuals, fetch_nip01_profile,
+    fetch_relays_for_followed_users, light_visuals,
+    nostr_client::update_contact_list,
 };
 use serde::de::DeserializeOwned;
 use std::io::Read;
 
 // --- Migration Helper ---
-fn read_file_cache<T: DeserializeOwned>(path: &Path) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
+fn read_file_cache<T: DeserializeOwned>(
+    path: &Path,
+) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = fs::File::open(path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
@@ -48,14 +51,14 @@ pub async fn migrate_data_from_files(
                 if pubkey_hex.ends_with("_migrated") {
                     continue;
                 }
-                println!("Migrating data for pubkey: {}", pubkey_hex);
+                println!("Migrating data for pubkey: {pubkey_hex}");
 
                 // Migrate followed_pubkeys.json
                 let followed_path = path.join("followed_pubkeys.json");
                 if followed_path.exists() {
                     if let Ok(cache) = read_file_cache::<HashSet<PublicKey>>(&followed_path) {
                         if let Err(e) = cache_db.write_cache(DB_FOLLOWED, pubkey_hex, &cache.data) {
-                            eprintln!("Failed to migrate followed_pubkeys for {}: {}", pubkey_hex, e);
+                            eprintln!("Failed to migrate followed_pubkeys for {pubkey_hex}: {e}");
                         }
                     }
                 }
@@ -63,9 +66,11 @@ pub async fn migrate_data_from_files(
                 // Migrate nip65_relays.json
                 let relays_path = path.join("nip65_relays.json");
                 if relays_path.exists() {
-                    if let Ok(cache) = read_file_cache::<Vec<(String, Option<String>)>>(&relays_path) {
+                    if let Ok(cache) =
+                        read_file_cache::<Vec<(String, Option<String>)>>(&relays_path)
+                    {
                         if let Err(e) = cache_db.write_cache(DB_RELAYS, pubkey_hex, &cache.data) {
-                            eprintln!("Failed to migrate nip65_relays for {}: {}", pubkey_hex, e);
+                            eprintln!("Failed to migrate nip65_relays for {pubkey_hex}: {e}");
                         }
                     }
                 }
@@ -74,8 +79,8 @@ pub async fn migrate_data_from_files(
                 let profile_path = path.join("my_profile.json");
                 if profile_path.exists() {
                     if let Ok(cache) = read_file_cache::<ProfileMetadata>(&profile_path) {
-                         if let Err(e) = cache_db.write_cache(DB_PROFILES, pubkey_hex, &cache.data) {
-                            eprintln!("Failed to migrate profile for {}: {}", pubkey_hex, e);
+                        if let Err(e) = cache_db.write_cache(DB_PROFILES, pubkey_hex, &cache.data) {
+                            eprintln!("Failed to migrate profile for {pubkey_hex}: {e}");
                         }
                     }
                 }
@@ -85,17 +90,17 @@ pub async fn migrate_data_from_files(
                 if timeline_path.exists() {
                     if let Ok(cache) = read_file_cache::<Vec<TimelinePost>>(&timeline_path) {
                         if let Err(e) = cache_db.write_cache(DB_TIMELINE, pubkey_hex, &cache.data) {
-                            eprintln!("Failed to migrate timeline for {}: {}", pubkey_hex, e);
+                            eprintln!("Failed to migrate timeline for {pubkey_hex}: {e}");
                         }
                     }
                 }
 
                 // Rename the directory to mark it as migrated
-                let migrated_path = path.with_file_name(format!("{}_migrated", pubkey_hex));
+                let migrated_path = path.with_file_name(format!("{pubkey_hex}_migrated"));
                 if let Err(e) = fs::rename(&path, &migrated_path) {
-                    eprintln!("Failed to rename migrated directory for {}: {}", pubkey_hex, e);
+                    eprintln!("Failed to rename migrated directory for {pubkey_hex}: {e}");
                 } else {
-                    println!("Finished migrating and renamed directory for pubkey: {}", pubkey_hex);
+                    println!("Finished migrating and renamed directory for pubkey: {pubkey_hex}");
                 }
             }
         }
@@ -103,7 +108,6 @@ pub async fn migrate_data_from_files(
     println!("Migration complete.");
     Ok(())
 }
-
 
 // --- データ取得とUI更新のための構造体 ---
 // `InitialData`は`FreshData`に置き換えられたため、削除
@@ -122,12 +126,15 @@ fn load_data_from_cache(
     cache_db: &LmdbCache,
     pubkey_hex: &str,
 ) -> Result<CachedData, Box<dyn std::error::Error + Send + Sync>> {
-    println!("Loading data from cache for pubkey: {}", pubkey_hex);
+    println!("Loading data from cache for pubkey: {pubkey_hex}");
 
     let followed_cache = cache_db.read_cache::<HashSet<PublicKey>>(DB_FOLLOWED, pubkey_hex)?;
-    let nip65_cache = cache_db.read_cache::<Vec<(String, Option<String>)>>(DB_RELAYS, pubkey_hex)?;
+    let nip65_cache =
+        cache_db.read_cache::<Vec<(String, Option<String>)>>(DB_RELAYS, pubkey_hex)?;
     let profile_cache = cache_db.read_cache::<ProfileMetadata>(DB_PROFILES, pubkey_hex)?;
-    let timeline_cache = cache_db.read_cache::<Vec<TimelinePost>>(DB_TIMELINE, pubkey_hex).ok();
+    let timeline_cache = cache_db
+        .read_cache::<Vec<TimelinePost>>(DB_TIMELINE, pubkey_hex)
+        .ok();
 
     if followed_cache.is_expired() || nip65_cache.is_expired() || profile_cache.is_expired() {
         return Err("Cache expired".into());
@@ -141,7 +148,6 @@ fn load_data_from_cache(
         timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data),
     })
 }
-
 
 // --- Step 2: ネットワークから新しいデータを取得 ---
 struct FreshData {
@@ -166,20 +172,20 @@ async fn fetch_fresh_data_from_network(
 
     // --- 1. リレー接続 (NIP-65) ---
     println!("Connecting to relays...");
-    let (log_message, fetched_nip65_relays) = connect_to_relays_with_nip65(
-        client,
-        keys,
-        discover_relays,
-        default_relays
-    ).await?;
-    println!("Relay connection process finished.\n{}", log_message);
+    let (log_message, fetched_nip65_relays) =
+        connect_to_relays_with_nip65(client, keys, discover_relays, default_relays).await?;
+    println!("Relay connection process finished.\n{log_message}");
     cache_db.write_cache(DB_RELAYS, &pubkey_hex, &fetched_nip65_relays)?;
-
 
     // --- 2. フォローリスト取得 (NIP-02) ---
     println!("Fetching NIP-02 contact list...");
-    let nip02_filter = Filter::new().authors(vec![keys.public_key()]).kind(Kind::ContactList).limit(1);
-    let nip02_filter_id = client.subscribe(vec![nip02_filter], Some(SubscribeAutoCloseOptions::default())).await;
+    let nip02_filter = Filter::new()
+        .authors(vec![keys.public_key()])
+        .kind(Kind::ContactList)
+        .limit(1);
+    let nip02_filter_id = client
+        .subscribe(nip02_filter, Some(SubscribeAutoCloseOptions::default()))
+        .await?;
 
     let mut followed_pubkeys = HashSet::new();
     let mut received_nip02 = false;
@@ -192,7 +198,7 @@ async fn fetch_fresh_data_from_network(
                 if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == Kind::ContactList && event.pubkey == keys.public_key() {
                         println!("Contact list event received.");
-                        for tag in &event.tags { if let Tag::PublicKey { public_key, .. } = tag { followed_pubkeys.insert(*public_key); } }
+                        for tag in event.tags.iter() { if let Some(nostr::TagStandard::PublicKey { public_key, .. }) = tag.as_standardized() { followed_pubkeys.insert(*public_key); } }
                         received_nip02 = true;
                         break;
                     }
@@ -200,7 +206,7 @@ async fn fetch_fresh_data_from_network(
             }
         } => {},
     }
-    client.unsubscribe(nip02_filter_id).await;
+    client.unsubscribe(&nip02_filter_id).await;
 
     if !received_nip02 {
         eprintln!("Failed to fetch contact list (timed out or not found).");
@@ -209,15 +215,14 @@ async fn fetch_fresh_data_from_network(
     }
     println!("Fetched {} followed pubkeys.", followed_pubkeys.len());
 
-
     // --- 3. タイムライン取得 ---
     let timeline_posts = fetch_timeline_posts(keys, discover_relays, &followed_pubkeys).await?;
     cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
 
-
     // --- 4. 自身のNIP-01 プロフィールメタデータ取得 ---
     println!("Fetching NIP-01 profile metadata for self...");
-    let (profile_metadata, profile_json_string) = fetch_nip01_profile(client, keys.public_key()).await?;
+    let (profile_metadata, profile_json_string) =
+        fetch_nip01_profile(client, keys.public_key()).await?;
     println!("NIP-01 profile fetch for self finished.");
     cache_db.write_cache(DB_PROFILES, &pubkey_hex, &profile_metadata)?;
 
@@ -242,33 +247,47 @@ async fn fetch_timeline_posts(
     }
 
     // 3a. フォローユーザーのNIP-65(kind:10002)を取得
-    let temp_discover_client = Client::new(keys);
+    let temp_discover_client = Client::new(keys.clone());
     for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
         temp_discover_client.add_relay(relay_url.trim()).await?;
     }
     temp_discover_client.connect().await;
     let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
-    let write_relay_urls = fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
-    temp_discover_client.shutdown().await?;
+    let write_relay_urls =
+        fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
+    temp_discover_client.shutdown().await;
 
     if !write_relay_urls.is_empty() {
         // 3b. 取得したwriteリレーで新しい一時クライアントを作成
-        let temp_fetch_client = Client::new(keys);
+        let temp_fetch_client = Client::new(keys.clone());
         for url in &write_relay_urls {
             temp_fetch_client.add_relay(url.clone()).await?;
         }
         temp_fetch_client.connect().await;
 
         // 3c. フォローユーザーのステータス(kind:30315)を取得
-        let timeline_filter = Filter::new().authors(followed_pubkeys.clone()).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
-        let status_events = temp_fetch_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
-        println!("Fetched {} statuses from followed users' write relays.", status_events.len());
+        let timeline_filter = Filter::new()
+            .authors(followed_pubkeys.clone())
+            .kind(Kind::from(30315))
+            .limit(20);
+        let status_events = temp_fetch_client
+            .fetch_events(timeline_filter, Duration::from_secs(10))
+            .await?;
+        println!(
+            "Fetched {} statuses from followed users' write relays.",
+            status_events.len()
+        );
 
         if !status_events.is_empty() {
             // 3d. ステータス投稿者のプロフィール(kind:0)を取得
-            let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
-            let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-            let metadata_events = temp_fetch_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+            let author_pubkeys: HashSet<PublicKey> =
+                status_events.iter().map(|e| e.pubkey).collect();
+            let metadata_filter = Filter::new()
+                .authors(author_pubkeys.into_iter())
+                .kind(Kind::Metadata);
+            let metadata_events = temp_fetch_client
+                .fetch_events(metadata_filter, Duration::from_secs(5))
+                .await?;
             let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
             for event in metadata_events {
                 if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
@@ -278,13 +297,19 @@ async fn fetch_timeline_posts(
 
             // 3e. ステータスとメタデータをマージ
             for event in status_events {
-                let emojis = event.tags.iter().filter_map(|tag| {
-                    if let Tag::Emoji { shortcode, url } = tag {
-                        Some((shortcode.clone(), url.to_string()))
-                    } else {
-                        None
-                    }
-                }).collect();
+                let emojis = event
+                    .tags
+                    .iter()
+                    .filter_map(|tag| {
+                        if let Some(nostr::TagStandard::Emoji { shortcode, url }) =
+                            tag.as_standardized()
+                        {
+                            Some((shortcode.to_string(), url.to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
                 timeline_posts.push(TimelinePost {
                     author_pubkey: event.pubkey,
@@ -296,11 +321,10 @@ async fn fetch_timeline_posts(
             }
             timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
         }
-        temp_fetch_client.shutdown().await?;
+        temp_fetch_client.shutdown().await;
     }
     Ok(timeline_posts)
 }
-
 
 fn render_post_content(
     ui: &mut egui::Ui,
@@ -330,8 +354,8 @@ fn render_post_content(
 
                 match app_data.image_cache.get(&url_key) {
                     Some(ImageState::Loaded(texture_handle)) => {
-                        let image_widget = egui::Image::new(texture_handle)
-                            .fit_to_exact_size(emoji_size);
+                        let image_widget =
+                            egui::Image::new(texture_handle).fit_to_exact_size(emoji_size);
                         ui.add(image_widget);
                     }
                     Some(ImageState::Loading) => {
@@ -340,11 +364,17 @@ fn render_post_content(
                     }
                     Some(ImageState::Failed) => {
                         let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
-                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "💔".to_string(), egui::FontId::default(), ui.visuals().error_fg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "💔".to_string(),
+                            egui::FontId::default(),
+                            ui.visuals().error_fg_color,
+                        );
                     }
                     None => {
                         if !urls_to_load.contains(&url_key) {
-                           urls_to_load.push(url_key.clone());
+                            urls_to_load.push(url_key.clone());
                         }
                         let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
                         ui.put(rect, egui::Spinner::new());
@@ -366,19 +396,16 @@ fn render_post_content(
     });
 }
 
-
 // NIP-49 (ChaCha20Poly1305) のための暗号クレート
+use base64::{Engine as _, engine::general_purpose};
 use chacha20poly1305::{
+    ChaCha20Poly1305, Key, Nonce,
     aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Nonce, Key,
 };
 use rand::Rng;
 use rand::rngs::OsRng;
-use base64::{Engine as _, engine::general_purpose};
-use hex;
 
 // PBKDF2のためのクレート
-use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
 
 use crate::Config;
@@ -438,7 +465,9 @@ impl eframe::App for NostrStatusApp {
         let app_data_arc_clone = self.data.clone();
         let runtime_handle = self.runtime.handle().clone();
 
-        let panel_frame = egui::Frame::default().inner_margin(Margin::same(15)).fill(ctx.style().visuals.panel_fill);
+        let panel_frame = egui::Frame::default()
+            .inner_margin(Margin::same(15))
+            .fill(ctx.style().visuals.panel_fill);
 
         let card_frame = egui::Frame {
             inner_margin: Margin::same(12),
@@ -479,8 +508,16 @@ impl eframe::App for NostrStatusApp {
 
                     ui.selectable_value(&mut app_data.current_tab, AppTab::Home, home_tab_text);
                     if app_data.is_logged_in {
-                        ui.selectable_value(&mut app_data.current_tab, AppTab::Relays, relays_tab_text);
-                        ui.selectable_value(&mut app_data.current_tab, AppTab::Profile, profile_tab_text);
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
+                            AppTab::Relays,
+                            relays_tab_text,
+                        );
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
+                            AppTab::Profile,
+                            profile_tab_text,
+                        );
                     }
                 });
             });
@@ -531,7 +568,7 @@ impl eframe::App for NostrStatusApp {
                                                 Ok(Keys::parse(&decrypted_secret_key_hex)?)
                                             })()?;
                                             println!("Key decrypted for pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
-                                            let client = Client::new(&keys);
+                                            let client = Client::new(keys.clone());
                                             let pubkey_hex = keys.public_key().to_string();
                                             let (discover_relays, default_relays) = {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
@@ -584,25 +621,23 @@ impl eframe::App for NostrStatusApp {
                                                 app_data.profile_fetch_status = "Profile loaded.".to_string();
                                                 println!("Network fetch complete!");
                                             } else if let Err(e) = fresh_data_result {
-                                                eprintln!("Failed to fetch fresh data: {}", e);
+                                                eprintln!("Failed to fetch fresh data: {e}");
                                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
-                                                app_data.profile_fetch_status = format!("Failed to refresh data: {}", e);
+                                                app_data.profile_fetch_status = format!("Failed to refresh data: {e}");
                                             }
                                             Ok(())
                                         }.await;
                                         if let Err(e) = login_result {
-                                            eprintln!("Login failed: {}", e);
+                                            eprintln!("Login failed: {e}");
                                             let client_to_shutdown = {
                                                 let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                                 app_data_in_task.nostr_client.take()
                                             };
                                             if let Some(client) = client_to_shutdown {
-                                                if let Err(_e) = client.shutdown().await {
-                                                     eprintln!("Failed to shutdown client: {}", _e);
-                                                }
+                                                client.shutdown().await;
                                             }
                                             let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
-                                            app_data_in_task.profile_fetch_status = format!("Login failed: {}", e);
+                                            app_data_in_task.profile_fetch_status = format!("Login failed: {e}");
                                         }
                                         let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                         app_data_in_task.is_loading = false;
@@ -648,19 +683,18 @@ impl eframe::App for NostrStatusApp {
                                         let registration_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                                             let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                                                 let user_provided_keys = Keys::parse(&secret_key_input)?;
-                                                if user_provided_keys.secret_key().is_err() { return Err("Invalid secret key".into()); }
                                                 let mut salt_bytes = [0u8; 16];
                                                 OsRng.fill(&mut salt_bytes);
-                                                let salt_base64 = general_purpose::STANDARD.encode(&salt_bytes);
+                                                let salt_base64 = general_purpose::STANDARD.encode(salt_bytes);
                                                 let mut derived_key_bytes = [0u8; 32];
-                                                pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), &salt_bytes, 100_000, &mut derived_key_bytes);
+                                                pbkdf2::pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), &salt_bytes, 100_000, &mut derived_key_bytes);
                                                 let cipher_key = Key::from_slice(&derived_key_bytes);
                                                 let cipher = ChaCha20Poly1305::new(cipher_key);
-                                                let plaintext_bytes = user_provided_keys.secret_key()?.to_secret_bytes();
+                                                let plaintext_bytes = user_provided_keys.secret_key().to_secret_bytes();
                                                 let mut nonce_bytes: [u8; 12] = [0u8; 12];
                                                 OsRng.fill(&mut nonce_bytes);
                                                 let nonce = Nonce::from_slice(&nonce_bytes);
-                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|e| format!("NIP-49 encryption error: {:?}", e))?;
+                                                let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|e| format!("NIP-49 encryption error: {e:?}"))?;
                                                 let mut encoded_data = ciphertext_with_tag.clone();
                                                 encoded_data.extend_from_slice(nonce_bytes.as_ref());
                                                 let nip49_encoded = format!("#nip49:{}", general_purpose::STANDARD.encode(&encoded_data));
@@ -670,7 +704,7 @@ impl eframe::App for NostrStatusApp {
                                                 Ok(user_provided_keys)
                                             })()?;
                                             println!("Registered and logged in with pubkey: {}", keys.public_key().to_bech32().unwrap_or_default());
-                                            let client = Client::new(&keys);
+                                            let client = Client::new(keys.clone());
                                             let (discover_relays, default_relays) = {
                                                 let app_data = cloned_app_data_arc.lock().unwrap();
                                                 (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
@@ -700,20 +734,18 @@ impl eframe::App for NostrStatusApp {
                                                 app_data.nip01_profile_display = fresh_data.profile_json_string;
                                                 app_data.profile_fetch_status = "Profile loaded.".to_string();
                                             } else if let Err(e) = fresh_data_result {
-                                                eprintln!("Failed to fetch initial data for registration: {}", e);
+                                                eprintln!("Failed to fetch initial data for registration: {e}");
                                             }
                                             Ok(())
                                         }.await;
                                         if let Err(e) = registration_result {
-                                            eprintln!("Failed to register new key: {}", e);
+                                            eprintln!("Failed to register new key: {e}");
                                             let client_to_shutdown = {
                                                 let mut app_data_in_task = cloned_app_data_arc.lock().unwrap();
                                                 app_data_in_task.nostr_client.take()
                                             };
                                             if let Some(client) = client_to_shutdown {
-                                                if let Err(shutdown_err) = client.shutdown().await {
-                                                    eprintln!("Failed to shutdown client: {}", shutdown_err);
-                                                }
+                                                client.shutdown().await;
                                             }
                                         }
                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -760,7 +792,7 @@ impl eframe::App for NostrStatusApp {
                                                     println!("Publishing NIP-38 status...");
 
                                                     if status_message.chars().count() > MAX_STATUS_LENGTH {
-                                                        eprintln!("Status is too long (max {} chars)", MAX_STATUS_LENGTH);
+                                                        eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
                                                         app_data.is_loading = false;
                                                         app_data.should_repaint = true;
                                                         return;
@@ -769,21 +801,24 @@ impl eframe::App for NostrStatusApp {
                                                     let cloned_app_data_arc = app_data_arc_clone.clone();
                                                     runtime_handle.spawn(async move {
                                                         let d_tag_value = "general".to_string();
-                                                        let event = EventBuilder::new(Kind::ParameterizedReplaceable(30315), status_message.clone(), vec![Tag::Identifier(d_tag_value)]).to_event(&keys_clone_nip38_send);
-                                                        match event {
-                                                            Ok(event) => match client_clone_nip38_send.send_event(event).await {
+                                                        let event_result = EventBuilder::new(Kind::from(30315), status_message.clone())
+                                                            .tags(vec![Tag::identifier(d_tag_value)])
+                                                            .sign(&keys_clone_nip38_send)
+                                                            .await;
+                                                        match event_result {
+                                                            Ok(event) => match client_clone_nip38_send.send_event(&event).await {
                                                                 Ok(event_id) => {
-                                                                    println!("Status published with event id: {}", event_id);
+                                                                    println!("Status published with event id: {event_id:?}");
                                                                     let mut data = cloned_app_data_arc.lock().unwrap();
                                                                     data.status_message_input.clear();
                                                                     data.show_post_dialog = false;
                                                                 }
                                                                 Err(e) => {
-                                                                    eprintln!("Failed to publish status: {}", e);
+                                                                    eprintln!("Failed to publish status: {e}");
                                                                 }
                                                             },
                                                             Err(e) => {
-                                                                eprintln!("Failed to create event: {}", e);
+                                                                eprintln!("Failed to create event: {e}");
                                                             }
                                                         }
                                                         let mut data = cloned_app_data_arc.lock().unwrap();
@@ -828,14 +863,14 @@ impl eframe::App for NostrStatusApp {
                                             }
 
                                             // 1. DiscoverリレーでフォローユーザーのNIP-65(kind:10002)を取得
-                                            let discover_client = Client::new(&my_keys);
+                                            let discover_client = Client::new(my_keys.clone());
                                             for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
                                                 discover_client.add_relay(relay_url.trim()).await?;
                                             }
                                             discover_client.connect().await;
                                             let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
                                             let write_relay_urls = fetch_relays_for_followed_users(&discover_client, followed_pubkeys_vec).await?;
-                                            discover_client.shutdown().await?;
+                                            discover_client.shutdown().await;
 
                                             if write_relay_urls.is_empty() {
                                                 println!("No writeable relays found for followed users.");
@@ -843,15 +878,15 @@ impl eframe::App for NostrStatusApp {
                                             }
 
                                             // 2. 取得したwriteリレーで新しい一時クライアントを作成
-                                            let temp_client = Client::new(&my_keys);
+                                            let temp_client = Client::new(my_keys.clone());
                                             for url in &write_relay_urls {
                                                 temp_client.add_relay(url.clone()).await?;
                                             }
                                             temp_client.connect().await;
 
                                             // 3. フォローユーザーのステータス(kind:30315)を取得
-                                            let timeline_filter = Filter::new().authors(followed_pubkeys).kind(Kind::ParameterizedReplaceable(30315)).limit(20);
-                                            let status_events = temp_client.get_events_of(vec![timeline_filter], Some(Duration::from_secs(10))).await?;
+                                            let timeline_filter = Filter::new().authors(followed_pubkeys).kind(Kind::from(30315)).limit(20);
+                                            let status_events = temp_client.fetch_events(timeline_filter, Duration::from_secs(10)).await?;
                                             println!("Fetched {} statuses from followed users' write relays.", status_events.len());
 
                                             let mut timeline_posts = Vec::new();
@@ -860,7 +895,7 @@ impl eframe::App for NostrStatusApp {
                                                 let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
                                                 println!("Fetching metadata for {} authors.", author_pubkeys.len());
                                                 let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-                                                let metadata_events = temp_client.get_events_of(vec![metadata_filter], Some(Duration::from_secs(5))).await?;
+                                                let metadata_events = temp_client.fetch_events(metadata_filter, Duration::from_secs(5)).await?;
 
                                                 let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
                                                 for event in metadata_events {
@@ -873,8 +908,8 @@ impl eframe::App for NostrStatusApp {
                                                 // 5. ステータスとメタデータをマージ
                                                 for event in status_events {
                                                     let emojis = event.tags.iter().filter_map(|tag| {
-                                                        if let Tag::Emoji { shortcode, url } = tag {
-                                                            Some((shortcode.clone(), url.to_string()))
+                                                        if let Some(nostr::TagStandard::Emoji { shortcode, url }) = tag.as_standardized() {
+                                                            Some((shortcode.to_string(), url.to_string()))
                                                         } else {
                                                             None
                                                         }
@@ -890,7 +925,7 @@ impl eframe::App for NostrStatusApp {
                                             }
 
                                             // 6. 一時クライアントをシャットダウン
-                                            temp_client.shutdown().await?;
+                                            temp_client.shutdown().await;
 
                                             Ok(timeline_posts)
                                         }.await;
@@ -909,7 +944,7 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                             },
                                             Err(e) => {
-                                                eprintln!("Failed to fetch timeline: {}", e);
+                                                eprintln!("Failed to fetch timeline: {e}");
                                                 // エラーが発生してもタイムラインはクリアしない
                                             }
                                         }
@@ -976,7 +1011,7 @@ impl eframe::App for NostrStatusApp {
                                                         ui.label(egui::RichText::new(display_name).strong().color(app_data.current_theme.text_color()));
 
                                                         // --- Timestamp ---
-                                                        let created_at_datetime = chrono::DateTime::from_timestamp(post.created_at.as_i64(), 0).unwrap();
+                                                        let created_at_datetime = chrono::DateTime::from_timestamp(post.created_at.as_u64() as i64, 0).unwrap();
                                                         let local_datetime = created_at_datetime.with_timezone(&chrono::Local);
                                                         ui.label(egui::RichText::new(local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()).color(egui::Color32::GRAY).small());
 
@@ -1064,12 +1099,12 @@ impl eframe::App for NostrStatusApp {
                                                     if let Some(keys) = &app_data.my_keys {
                                                         let pubkey_hex = keys.public_key().to_string();
                                                         if let Err(e) = cache_db_clone.write_cache(DB_FOLLOWED, &pubkey_hex, &app_data.followed_pubkeys) {
-                                                            eprintln!("Failed to write follow list cache: {}", e);
+                                                            eprintln!("Failed to write follow list cache: {e}");
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Failed to update contact list: {}", e);
+                                                    eprintln!("Failed to update contact list: {e}");
                                                 }
                                             }
                                             let mut app_data = cloned_app_data_arc.lock().unwrap();
@@ -1112,10 +1147,10 @@ impl eframe::App for NostrStatusApp {
                                         runtime_handle.spawn(async move {
                                             match connect_to_relays_with_nip65(&client_clone, &keys_clone, &discover_relays, &default_relays).await {
                                                 Ok((log_message, fetched_nip65_relays)) => {
-                                                    println!("Relay connection successful!\n{}", log_message);
+                                                    println!("Relay connection successful!\n{log_message}");
                                                     let pubkey_hex = keys_clone.public_key().to_string();
                                                     if let Err(e) = cache_db_clone.write_cache(DB_RELAYS, &pubkey_hex, &fetched_nip65_relays) {
-                                                        eprintln!("Failed to write NIP-65 cache: {}", e);
+                                                        eprintln!("Failed to write NIP-65 cache: {e}");
                                                     }
 
                                                     let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1133,7 +1168,7 @@ impl eframe::App for NostrStatusApp {
                                                     }).collect();
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Failed to connect to relays: {}", e);
+                                                    eprintln!("Failed to connect to relays: {e}");
                                                 }
                                             }
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1219,14 +1254,17 @@ impl eframe::App for NostrStatusApp {
                                                             return None;
                                                         }
                                                         let policy = if relay.read && !relay.write {
-                                                            Some(nostr::RelayMetadata::Read)
+                                                            Some(RelayMetadata::Read)
                                                         } else if !relay.read && relay.write {
-                                                            Some(nostr::RelayMetadata::Write)
+                                                            Some(RelayMetadata::Write)
                                                         } else {
                                                             // read & write or none are represented as no policy marker
                                                             None
                                                         };
-                                                        Some(Tag::RelayMetadata(relay.url.clone().into(), policy))
+                                                        match RelayUrl::parse(&relay.url) {
+                                                            Ok(url) => Some(Tag::relay_metadata(url, policy)),
+                                                            Err(_) => None,
+                                                        }
                                                     })
                                                     .collect();
 
@@ -1234,11 +1272,16 @@ impl eframe::App for NostrStatusApp {
                                                             println!("Warning: Publishing an empty NIP-65 list.");
                                                 }
 
-                                                let event = EventBuilder::new(Kind::RelayList, "", tags).to_event(&keys)?;
+                                                let event = EventBuilder::new(Kind::RelayList, "").tags(tags).sign(&keys).await?;
 
                                                 // Discoverリレーに接続してイベントを送信
-                                                let opts = Options::new().connection_timeout(Some(Duration::from_secs(20)));
-                                                let discover_client = Client::with_opts(&keys, opts);
+                                                 let opts = Options::new();
+                                                 let discover_client = Client::builder()
+                                                     .signer(keys.clone())
+                                                     .opts(opts)
+                                                     .build();
+                                                discover_client.connect().await;
+                                                discover_client.wait_for_connection(Duration::from_secs(20)).await;
 
                                                 for relay_url in discover_relays.lines() {
                                                     if !relay_url.trim().is_empty() {
@@ -1247,15 +1290,15 @@ impl eframe::App for NostrStatusApp {
                                                 }
                                                 discover_client.connect().await;
 
-                                                        let event_id = discover_client.send_event(event).await?;
-                                                        println!("NIP-65 list published with event id: {}", event_id);
+                                                        let event_id = discover_client.send_event(&event).await?;
+                                                        println!("NIP-65 list published with event id: {event_id:?}");
 
-                                                discover_client.shutdown().await?;
+                                                discover_client.shutdown().await;
                                                 Ok(())
                                             }.await;
 
                                             if let Err(e) = result {
-                                                eprintln!("Failed to publish NIP-65 list: {}", e);
+                                                eprintln!("Failed to publish NIP-65 list: {e}");
                                             }
 
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1316,7 +1359,7 @@ impl eframe::App for NostrStatusApp {
                                         ui.label(other_fields_label_text);
                                         for (key, value) in app_data.editable_profile.extra.iter().take(5) { // 最初の5つだけ表示
                                             ui.horizontal(|ui| {
-                                                ui.label(format!("{}:", key));
+                                                ui.label(format!("{key}:"));
                                                 let mut display_value = value.to_string(); // Create a temporary String for display
                                                 ui.add(egui::TextEdit::singleline(&mut display_value)
                                                     .interactive(false)); // Make it read-only
@@ -1347,17 +1390,19 @@ impl eframe::App for NostrStatusApp {
                                                 let profile_content = serde_json::to_string(&editable_profile_clone)?;
 
                                                 // Kind::Metadata (Kind 0) イベントを作成
-                                                let event = EventBuilder::new(Kind::Metadata, profile_content.clone(), vec![]).to_event(&keys_clone)?;
+                                                let event = EventBuilder::new(Kind::Metadata, profile_content.clone())
+                                                    .sign(&keys_clone)
+                                                    .await?;
 
                                                 // イベントをリレーに送信
-                                                match client_clone.send_event(event).await {
+                                                match client_clone.send_event(&event).await {
                                                     Ok(event_id) => {
-                                                        println!("NIP-01 profile published with event id: {}", event_id);
+                                                        println!("NIP-01 profile published with event id: {event_id:?}");
 
                                                         // プロフィールをキャッシュに保存
                                                         let pubkey_hex = keys_clone.public_key().to_string();
                                                         if let Err(e) = cache_db_clone.write_cache(DB_PROFILES, &pubkey_hex, &editable_profile_clone) {
-                                                            eprintln!("Failed to write profile cache: {}", e);
+                                                            eprintln!("Failed to write profile cache: {e}");
                                                         }
 
                                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1366,7 +1411,7 @@ impl eframe::App for NostrStatusApp {
                                                     }
                                                     Err(e) => {
                                                         let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                        app_data_async.profile_fetch_status = format!("Failed to save profile: {}", e);
+                                                        app_data_async.profile_fetch_status = format!("Failed to save profile: {e}");
                                                     }
                                                 }
                                                 Ok(())
@@ -1374,7 +1419,7 @@ impl eframe::App for NostrStatusApp {
 
                                             if let Err(e) = result {
                                                 let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                                                app_data_async.profile_fetch_status = format!("Error saving profile: {}", e);
+                                                app_data_async.profile_fetch_status = format!("Error saving profile: {e}");
                                             }
 
                                             let mut app_data_async = cloned_app_data_arc.lock().unwrap();
@@ -1420,9 +1465,7 @@ impl eframe::App for NostrStatusApp {
                                         // Clientのシャットダウンを非同期タスクで行う
                                         if let Some(client) = client_to_shutdown {
                                             runtime_handle.spawn(async move {
-                                                if let Err(e) = client.shutdown().await {
-                                                    eprintln!("Failed to shutdown client: {}", e);
-                                                }
+                                                client.shutdown().await;
                                             });
                                         }
                                     }

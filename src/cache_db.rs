@@ -1,5 +1,8 @@
-use heed::{Env, Database, Error, types::{Str, Bytes}};
-use serde::{de::DeserializeOwned, Serialize};
+use heed::{
+    Database, Env, Error,
+    types::{Bytes, Str},
+};
+use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -39,7 +42,10 @@ impl LmdbCache {
         key: &str,
     ) -> Result<Cache<T>, Box<dyn std::error::Error + Send + Sync>> {
         let rtxn = self.env.read_txn()?;
-        let db: Database<Str, Bytes> = self.env.open_database(&rtxn, Some(db_name))?.ok_or("database not found")?;
+        let db: Database<Str, Bytes> = self
+            .env
+            .open_database(&rtxn, Some(db_name))?
+            .ok_or("database not found")?;
         let data = db.get(&rtxn, key)?.ok_or("key not found")?;
 
         let cache: Cache<T> = serde_json::from_slice(data)?;
@@ -58,7 +64,10 @@ impl LmdbCache {
         data: &T,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut wtxn = self.env.write_txn()?;
-        let db: Database<Str, Bytes> = self.env.open_database(&wtxn, Some(db_name))?.ok_or("database not found")?;
+        let db: Database<Str, Bytes> = self
+            .env
+            .open_database(&wtxn, Some(db_name))?
+            .ok_or("database not found")?;
         let cache = Cache::new(data);
         let serialized_data = serde_json::to_vec(&cache)?;
 
