@@ -1,15 +1,11 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
-
-use nostr::{EventBuilder, Filter, Kind, PublicKey, Tag, nips::nip19::ToBech32};
-use nostr_sdk::Client;
+use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32};
 use regex::Regex;
 
 use crate::{
     types::*,
-    nostr_client::{fetch_relays_for_followed_users, update_contact_list},
+    nostr_client::{update_contact_list, fetch_timeline_events},
     cache_db::DB_FOLLOWED,
     MAX_STATUS_LENGTH,
 };
@@ -209,79 +205,7 @@ pub fn draw_home_view(
 
             let cloned_app_data_arc = app_data_arc.clone();
             runtime_handle.spawn(async move {
-                let timeline_result: Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> = async {
-                    if followed_pubkeys.is_empty() {
-                        println!("No followed users to fetch status from.");
-                        return Ok(Vec::new());
-                    }
-
-                    // 1. DiscoverリレーでフォローユーザーのNIP-65(kind:10002)を取得
-                    let discover_client = Client::new(my_keys.clone());
-                    for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
-                        discover_client.add_relay(relay_url.trim()).await?;
-                    }
-                    discover_client.connect().await;
-                    let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
-                    let write_relay_urls = fetch_relays_for_followed_users(&discover_client, followed_pubkeys_vec).await?;
-                    discover_client.shutdown().await;
-
-                    if write_relay_urls.is_empty() {
-                        println!("No writeable relays found for followed users.");
-                        return Ok(Vec::new());
-                    }
-
-                    // 2. 取得したwriteリレーで新しい一時クライアントを作成
-                    let temp_client = Client::new(my_keys.clone());
-                    for url in &write_relay_urls {
-                        temp_client.add_relay(url.clone()).await?;
-                    }
-                    temp_client.connect().await;
-
-                    // 3. フォローユーザーのステータス(kind:30315)を取得
-                    let timeline_filter = Filter::new().authors(followed_pubkeys).kind(Kind::from(30315)).limit(20);
-                    let status_events = temp_client.fetch_events(timeline_filter, Duration::from_secs(10)).await?;
-                    println!("Fetched {} statuses from followed users' write relays.", status_events.len());
-
-                    let mut timeline_posts = Vec::new();
-                    if !status_events.is_empty() {
-                        // 4. ステータス投稿者のプロフィール(kind:0)を取得
-                        let author_pubkeys: HashSet<PublicKey> = status_events.iter().map(|e| e.pubkey).collect();
-                        println!("Fetching metadata for {} authors.", author_pubkeys.len());
-                        let metadata_filter = Filter::new().authors(author_pubkeys.into_iter()).kind(Kind::Metadata);
-                        let metadata_events = temp_client.fetch_events(metadata_filter, Duration::from_secs(5)).await?;
-
-                        let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
-                        for event in metadata_events {
-                            if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
-                                profiles.insert(event.pubkey, metadata);
-                            }
-                        }
-                        println!("Fetched {} profiles.", profiles.len());
-
-                        // 5. ステータスとメタデータをマージ
-                        for event in status_events {
-                            let emojis = event.tags.iter().filter_map(|tag| {
-                                if let Some(nostr::TagStandard::Emoji { shortcode, url }) = tag.as_standardized() {
-                                    Some((shortcode.to_string(), url.to_string()))
-                                } else {
-                                    None
-                                }
-                            }).collect();
-                            timeline_posts.push(TimelinePost {
-                                author_pubkey: event.pubkey,
-                                author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
-                                content: event.content.clone(),
-                                created_at: event.created_at,
-                                emojis,
-                            });
-                        }
-                    }
-
-                    // 6. 一時クライアントをシャットダウン
-                    temp_client.shutdown().await;
-
-                    Ok(timeline_posts)
-                }.await;
+                let timeline_result = fetch_timeline_events(&my_keys, &discover_relays, &followed_pubkeys).await;
 
                 let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                 app_data_async.is_loading = false;
