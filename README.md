@@ -94,7 +94,7 @@ This app removes social features like replies and likes to provide a pure status
     *   **Post Fetching:** Achieves a more complete timeline by fetching the NIP-65 relay lists of users you follow (NIP-02) and searching for their statuses there.
     *   **Relay List Editing:** Add, remove, set read/write permissions, and publish your NIP-65 list directly from within the app.
 *   **Efficient Caching:** Caches profiles, follow lists, relay lists, and timelines in a local LMDB database for significantly faster startup and data loading on subsequent launches.
-*   **Tabbed Interface:** Easily switch between functions with tabs for Home (Timeline & Posting), Relays, and Profile.
+*   **Tabbed Interface:** Easily switch between functions with tabs for Home (Posting), Relays, and Profile.
 *   **No Conversation Features:** This tool is for posting statuses only. There are no replies, mentions, reactions, or other conversational features.
 
 ## Technical Stacks

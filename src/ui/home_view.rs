@@ -85,12 +85,10 @@ pub fn draw_home_view(
     runtime_handle: tokio::runtime::Handle,
 ) {
     let new_post_window_title_text = "新規投稿";
-    let set_status_heading_text = "ステータスを設定";
     let status_input_hint_text = "いまどうしてる？";
     let publish_button_text = "公開";
     let cancel_button_text = "キャンセル";
-    let status_too_long_text = "ステータスが長すぎます！";
-    let timeline_heading_text = "タイムライン";
+    let timeline_heading_text = "ホーム";
     let fetch_latest_button_text = "最新の投稿を取得";
     let no_timeline_message_text = "タイムラインに投稿はまだありません。";
 
@@ -110,67 +108,80 @@ pub fn draw_home_view(
         egui::Window::new(new_post_window_title_text)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
             .show(ctx, |ui| {
-                ui.heading(set_status_heading_text);
-                ui.add_space(15.0);
-                ui.add(egui::TextEdit::multiline(&mut app_data.status_message_input)
-                    .desired_rows(5)
-                    .hint_text(status_input_hint_text));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(format!("{}/{}", app_data.status_message_input.chars().count(), MAX_STATUS_LENGTH));
-                    if app_data.status_message_input.chars().count() > MAX_STATUS_LENGTH {
-                        ui.label(egui::RichText::new(status_too_long_text).color(egui::Color32::RED).strong());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(publish_button_text).clicked() && !app_data.is_loading {
-                            let status_message = app_data.status_message_input.clone();
-                            let client_clone_nip38_send = app_data.nostr_client.as_ref().unwrap().clone();
-                            let keys_clone_nip38_send = app_data.my_keys.clone().unwrap();
-
-                            app_data.is_loading = true;
-                            app_data.should_repaint = true;
-                            println!("Publishing NIP-38 status...");
-
-                            if status_message.chars().count() > MAX_STATUS_LENGTH {
-                                eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
-                                app_data.is_loading = false;
-                                app_data.should_repaint = true;
-                                return;
+                egui::TopBottomPanel::bottom("post_dialog_buttons")
+                    .show_inside(ui, |ui| {
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            let count = app_data.status_message_input.chars().count();
+                            let mut counter_text = egui::RichText::new(format!("{}/{}", count, MAX_STATUS_LENGTH));
+                            if count > MAX_STATUS_LENGTH {
+                                counter_text = counter_text.color(egui::Color32::RED);
                             }
+                            ui.label(counter_text);
 
-                            let cloned_app_data_arc = app_data_arc.clone();
-                            runtime_handle.spawn(async move {
-                                let d_tag_value = "general".to_string();
-                                let event_result = EventBuilder::new(Kind::from(30315), status_message.clone())
-                                    .tags(vec![Tag::identifier(d_tag_value)])
-                                    .sign(&keys_clone_nip38_send)
-                                    .await;
-                                match event_result {
-                                    Ok(event) => match client_clone_nip38_send.send_event(&event).await {
-                                        Ok(event_id) => {
-                                            println!("Status published with event id: {event_id:?}");
-                                            let mut data = cloned_app_data_arc.lock().unwrap();
-                                            data.status_message_input.clear();
-                                            data.show_post_dialog = false;
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Failed to publish status: {e}");
-                                        }
-                                    },
-                                    Err(e) => {
-                                        eprintln!("Failed to create event: {e}");
-                                    }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button(cancel_button_text).clicked() {
+                                    app_data.show_post_dialog = false;
                                 }
-                                let mut data = cloned_app_data_arc.lock().unwrap();
-                                data.is_loading = false;
-                                data.should_repaint = true;
+                                if ui.button(publish_button_text).clicked() && !app_data.is_loading {
+                                    let status_message = app_data.status_message_input.clone();
+                                    let client_clone_nip38_send = app_data.nostr_client.as_ref().unwrap().clone();
+                                    let keys_clone_nip38_send = app_data.my_keys.clone().unwrap();
+
+                                    app_data.is_loading = true;
+                                    app_data.should_repaint = true;
+                                    println!("Publishing NIP-38 status...");
+
+                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
+                                        eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
+                                        app_data.is_loading = false;
+                                        app_data.should_repaint = true;
+                                        return;
+                                    }
+
+                                    let cloned_app_data_arc = app_data_arc.clone();
+                                    runtime_handle.spawn(async move {
+                                        let d_tag_value = "general".to_string();
+                                        let event_result = EventBuilder::new(Kind::from(30315), status_message.clone())
+                                            .tags(vec![Tag::identifier(d_tag_value)])
+                                            .sign(&keys_clone_nip38_send)
+                                            .await;
+                                        match event_result {
+                                            Ok(event) => match client_clone_nip38_send.send_event(&event).await {
+                                                Ok(event_id) => {
+                                                    println!("Status published with event id: {event_id:?}");
+                                                    let mut data = cloned_app_data_arc.lock().unwrap();
+                                                    data.status_message_input.clear();
+                                                    data.show_post_dialog = false;
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Failed to publish status: {e}");
+                                                }
+                                            },
+                                            Err(e) => {
+                                                eprintln!("Failed to create event: {e}");
+                                            }
+                                        }
+                                        let mut data = cloned_app_data_arc.lock().unwrap();
+                                        data.is_loading = false;
+                                        data.should_repaint = true;
+                                    });
+                                }
                             });
-                        }
-                        if ui.button(cancel_button_text).clicked() {
-                            app_data.show_post_dialog = false;
-                        }
+                        });
+                    });
+
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    ui.add_space(15.0);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut app_data.status_message_input)
+                                .desired_rows(5)
+                                .desired_width(f32::INFINITY)
+                                .hint_text(status_input_hint_text),
+                        );
                     });
                 });
             });
@@ -179,58 +190,59 @@ pub fn draw_home_view(
     card_frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.heading(timeline_heading_text);
+
+            let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
+            if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
+                let followed_pubkeys = app_data.followed_pubkeys.clone();
+                let discover_relays = app_data.discover_relays_editor.clone();
+                let my_keys = app_data.my_keys.clone().unwrap();
+
+                app_data.is_loading = true;
+                app_data.should_repaint = true;
+
+                let cloned_app_data_arc = app_data_arc.clone();
+                runtime_handle.spawn(async move {
+                    let timeline_result = fetch_timeline_events(&my_keys, &discover_relays, &followed_pubkeys).await;
+
+                    let mut app_data_async = cloned_app_data_arc.lock().unwrap();
+                    app_data_async.is_loading = false;
+                    match timeline_result {
+                        Ok(new_posts) => {
+                            if !new_posts.is_empty() {
+                                let mut existing_ids: std::collections::HashSet<EventId> = app_data_async.timeline_posts.iter().map(|p| p.id).collect();
+                                let mut added_posts = 0;
+                                for post in new_posts {
+                                    if !existing_ids.contains(&post.id) {
+                                        existing_ids.insert(post.id);
+                                        app_data_async.timeline_posts.push(post);
+                                        added_posts += 1;
+                                    }
+                                }
+
+                                if added_posts > 0 {
+                                    app_data_async.timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                                    println!("Added {} new statuses to the timeline.", added_posts);
+                                } else {
+                                    println!("No new statuses found.");
+                                }
+                            } else {
+                                println!("Fetched 0 statuses.");
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("Failed to fetch timeline: {e}");
+                        }
+                    }
+                    app_data_async.should_repaint = true;
+                });
+            }
+
             if app_data.is_loading {
                 ui.add_space(10.0);
                 ui.spinner();
                 ui.label("更新中...");
             }
         });
-        ui.add_space(15.0);
-        let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
-        if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
-            let followed_pubkeys = app_data.followed_pubkeys.clone();
-            let discover_relays = app_data.discover_relays_editor.clone();
-            let my_keys = app_data.my_keys.clone().unwrap();
-
-            app_data.is_loading = true;
-            app_data.should_repaint = true;
-
-            let cloned_app_data_arc = app_data_arc.clone();
-            runtime_handle.spawn(async move {
-                let timeline_result = fetch_timeline_events(&my_keys, &discover_relays, &followed_pubkeys).await;
-
-                let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                app_data_async.is_loading = false;
-                match timeline_result {
-                    Ok(new_posts) => {
-                        if !new_posts.is_empty() {
-                            let mut existing_ids: std::collections::HashSet<EventId> = app_data_async.timeline_posts.iter().map(|p| p.id).collect();
-                            let mut added_posts = 0;
-                            for post in new_posts {
-                                if !existing_ids.contains(&post.id) {
-                                    existing_ids.insert(post.id);
-                                    app_data_async.timeline_posts.push(post);
-                                    added_posts += 1;
-                                }
-                            }
-
-                            if added_posts > 0 {
-                                app_data_async.timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                                println!("Added {} new statuses to the timeline.", added_posts);
-                            } else {
-                                println!("No new statuses found.");
-                            }
-                        } else {
-                            println!("Fetched 0 statuses.");
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("Failed to fetch timeline: {e}");
-                    }
-                }
-                app_data_async.should_repaint = true;
-            });
-        }
         ui.add_space(10.0);
         let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
         let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
