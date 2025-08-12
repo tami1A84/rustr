@@ -1,10 +1,10 @@
 use futures::future::join_all;
 use nostr::{Filter, Keys, Kind, PublicKey, Tag as NostrTag, nips::nip19::ToBech32};
 use nostr_sdk::{Client, ClientOptions as Options, SubscribeAutoCloseOptions};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use crate::ProfileMetadata;
+use crate::types::{ProfileMetadata, TimelinePost};
 
 // NIP-65とフォールバックを考慮したリレー接続関数
 pub async fn connect_to_relays_with_nip65(
@@ -320,4 +320,85 @@ pub async fn update_contact_list(
     println!("Contact list updated successfully.");
 
     Ok(followed_pubkeys)
+}
+
+pub async fn fetch_timeline_events(
+    keys: &Keys,
+    discover_relays: &str,
+    followed_pubkeys: &HashSet<PublicKey>,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut timeline_posts = Vec::new();
+    if followed_pubkeys.is_empty() {
+        return Ok(timeline_posts);
+    }
+
+    let temp_discover_client = Client::new(keys.clone());
+    for relay_url in discover_relays.lines().filter(|url| !url.trim().is_empty()) {
+        temp_discover_client.add_relay(relay_url.trim()).await?;
+    }
+    temp_discover_client.connect().await;
+    let followed_pubkeys_vec: Vec<PublicKey> = followed_pubkeys.iter().cloned().collect();
+    let write_relay_urls =
+        fetch_relays_for_followed_users(&temp_discover_client, followed_pubkeys_vec).await?;
+    temp_discover_client.shutdown().await;
+
+    if !write_relay_urls.is_empty() {
+        let temp_fetch_client = Client::new(keys.clone());
+        for url in &write_relay_urls {
+            temp_fetch_client.add_relay(url.clone()).await?;
+        }
+        temp_fetch_client.connect().await;
+
+        let timeline_filter = Filter::new()
+            .authors(followed_pubkeys.clone())
+            .kind(Kind::from(30315))
+            .limit(20);
+        let status_events = temp_fetch_client
+            .fetch_events(timeline_filter, Duration::from_secs(10))
+            .await?;
+
+        if !status_events.is_empty() {
+            let author_pubkeys: HashSet<PublicKey> =
+                status_events.iter().map(|e| e.pubkey).collect();
+            let metadata_filter = Filter::new()
+                .authors(author_pubkeys.into_iter())
+                .kind(Kind::Metadata);
+            let metadata_events = temp_fetch_client
+                .fetch_events(metadata_filter, Duration::from_secs(5))
+                .await?;
+            let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+            for event in metadata_events {
+                if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
+                    profiles.insert(event.pubkey, metadata);
+                }
+            }
+
+            for event in status_events {
+                let emojis = event
+                    .tags
+                    .iter()
+                    .filter_map(|tag| {
+                        if let Some(nostr::TagStandard::Emoji { shortcode, url }) =
+                            tag.as_standardized()
+                        {
+                            Some((shortcode.to_string(), url.to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                timeline_posts.push(TimelinePost {
+                    author_pubkey: event.pubkey,
+                    author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                    content: event.content.clone(),
+                    created_at: event.created_at,
+                    emojis,
+                });
+            }
+            timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+        }
+        temp_fetch_client.shutdown().await;
+    }
+    Ok(timeline_posts)
 }

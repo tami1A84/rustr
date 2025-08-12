@@ -6,7 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::Cache;
+use crate::types::Cache;
 
 pub const DB_PROFILES: &str = "profiles";
 pub const DB_FOLLOWED: &str = "followed_pubkeys";
