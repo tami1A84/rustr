@@ -440,12 +440,4 @@ pub fn draw_home_view(
         }
     });
 
-    egui::Area::new("fab_area".into())
-        .order(egui::Order::Foreground)
-        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -20.0))
-        .show(ctx, |ui| {
-            if ui.button(egui::RichText::new("➕").size(24.0)).clicked() {
-                app_data.show_post_dialog = true;
-            }
-        });
 }

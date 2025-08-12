@@ -71,6 +71,20 @@ impl eframe::App for NostrStatusApp {
                         );
                     }
                 });
+
+                if app_data.is_logged_in {
+                    ui.add_space(20.0);
+
+                    // --- 投稿ボタン ---
+                    let post_button_text = egui::RichText::new("投稿する").size(14.0).strong();
+                    let button = egui::Button::new(post_button_text)
+                        .min_size(egui::vec2(ui.available_width(), 40.0))
+                        .corner_radius(egui::CornerRadius::from(8.0));
+
+                    if ui.add(button).clicked() {
+                        app_data.show_post_dialog = true;
+                    }
+                }
             });
 
         egui::CentralPanel::default()
