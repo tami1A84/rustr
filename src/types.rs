@@ -97,6 +97,13 @@ pub enum AppTheme {
     Dark,
 }
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum StatusType {
+    General,
+    Music,
+    Podcast,
+}
+
 impl AppTheme {
     pub fn card_background_color(&self) -> egui::Color32 {
         match self {
@@ -121,6 +128,13 @@ pub struct NostrStatusAppInternal {
     pub secret_key_input: String,
     pub passphrase_input: String,
     pub confirm_passphrase_input: String,
+    pub current_status_type: StatusType,
+    pub show_music_dialog: bool,
+    pub music_track_input: String,
+    pub music_url_input: String,
+    pub show_podcast_dialog: bool,
+    pub podcast_episode_input: String,
+    pub podcast_url_input: String,
     pub nostr_client: Option<Client>,
     pub my_keys: Option<Keys>,
     pub followed_pubkeys: HashSet<PublicKey>,
