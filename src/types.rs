@@ -1,5 +1,5 @@
 use eframe::egui;
-use nostr::{PublicKey, Timestamp, Keys};
+use nostr::{PublicKey, Timestamp, Keys, EventId};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
@@ -60,6 +60,12 @@ pub struct EditableRelay {
     pub write: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ImageKind {
+    Avatar,
+    Emoji,
+}
+
 #[derive(Clone)]
 pub enum ImageState {
     Loading,
@@ -69,6 +75,7 @@ pub enum ImageState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelinePost {
+    pub id: EventId,
     pub author_pubkey: PublicKey,
     pub author_metadata: ProfileMetadata,
     pub content: String,

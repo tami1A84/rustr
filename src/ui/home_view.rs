@@ -1,6 +1,6 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
-use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32};
+use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32, EventId};
 use regex::Regex;
 
 use crate::{
@@ -8,14 +8,14 @@ use crate::{
     nostr_client::{update_contact_list, fetch_timeline_events},
     cache_db::DB_FOLLOWED,
     MAX_STATUS_LENGTH,
+    ui::image_cache,
 };
-
 
 fn render_post_content(
     ui: &mut egui::Ui,
     app_data: &mut NostrStatusAppInternal,
     post: &TimelinePost,
-    urls_to_load: &mut Vec<String>,
+    urls_to_load: &mut Vec<(String, ImageKind)>,
 ) {
     let re = Regex::new(r":(\w+):").unwrap();
     let mut last_end = 0;
@@ -26,13 +26,11 @@ fn render_post_content(
             let full_match = cap.get(0).unwrap();
             let shortcode = cap.get(1).unwrap().as_str();
 
-            // Render text before the emoji
             let pre_text = &post.content[last_end..full_match.start()];
             if !pre_text.is_empty() {
                 ui.label(egui::RichText::new(pre_text).color(text_color));
             }
 
-            // Render the emoji
             if let Some(url) = post.emojis.get(shortcode) {
                 let emoji_size = egui::vec2(20.0, 20.0);
                 let url_key = url.to_string();
@@ -58,29 +56,26 @@ fn render_post_content(
                         );
                     }
                     None => {
-                        if !urls_to_load.contains(&url_key) {
-                            urls_to_load.push(url_key.clone());
+                        if !urls_to_load.iter().any(|(u, _)| u == &url_key) {
+                            urls_to_load.push((url_key.clone(), ImageKind::Emoji));
                         }
                         let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
                         ui.put(rect, egui::Spinner::new());
                     }
                 }
             } else {
-                // If shortcode not found, render it as text
                 ui.label(egui::RichText::new(full_match.as_str()).color(text_color));
             }
 
             last_end = full_match.end();
         }
 
-        // Render remaining text after the last emoji
         let remaining_text = &post.content[last_end..];
         if !remaining_text.is_empty() {
             ui.label(egui::RichText::new(remaining_text).color(text_color));
         }
     });
 }
-
 
 pub fn draw_home_view(
     ui: &mut egui::Ui,
@@ -107,9 +102,7 @@ pub fn draw_home_view(
         ..Default::default()
     };
 
-
     if app_data.show_post_dialog {
-        // --- 背景を暗くする ---
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "dim_layer".into()));
         let screen_rect = ctx.screen_rect();
         painter.add(egui::Shape::rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(128)));
@@ -182,7 +175,7 @@ pub fn draw_home_view(
                 });
             });
     }
-    // --- タイムライン表示 ---
+
     card_frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.heading(timeline_heading_text);
@@ -201,7 +194,6 @@ pub fn draw_home_view(
 
             app_data.is_loading = true;
             app_data.should_repaint = true;
-            // println!("Fetching latest statuses...");
 
             let cloned_app_data_arc = app_data_arc.clone();
             runtime_handle.spawn(async move {
@@ -210,19 +202,30 @@ pub fn draw_home_view(
                 let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                 app_data_async.is_loading = false;
                 match timeline_result {
-                    Ok(mut posts) => {
-                        if !posts.is_empty() {
-                            posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                            println!("Fetched {} statuses successfully.", posts.len());
-                            app_data_async.timeline_posts = posts;
+                    Ok(new_posts) => {
+                        if !new_posts.is_empty() {
+                            let mut existing_ids: std::collections::HashSet<EventId> = app_data_async.timeline_posts.iter().map(|p| p.id).collect();
+                            let mut added_posts = 0;
+                            for post in new_posts {
+                                if !existing_ids.contains(&post.id) {
+                                    existing_ids.insert(post.id);
+                                    app_data_async.timeline_posts.push(post);
+                                    added_posts += 1;
+                                }
+                            }
+
+                            if added_posts > 0 {
+                                app_data_async.timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                                println!("Added {} new statuses to the timeline.", added_posts);
+                            } else {
+                                println!("No new statuses found.");
+                            }
                         } else {
-                            app_data_async.timeline_posts.clear();
-                            println!("No new statuses found for followed users.");
+                            println!("Fetched 0 statuses.");
                         }
                     },
                     Err(e) => {
                         eprintln!("Failed to fetch timeline: {e}");
-                        // エラーが発生してもタイムラインはクリアしない
                     }
                 }
                 app_data_async.should_repaint = true;
@@ -230,17 +233,22 @@ pub fn draw_home_view(
         }
         ui.add_space(10.0);
         let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
-        let mut urls_to_load = Vec::new();
-        egui::ScrollArea::vertical().id_salt("timeline_scroll_area").max_height(ui.available_height() - 100.0).show(ui, |ui| {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                if app_data.timeline_posts.is_empty() {
-                    ui.label(no_timeline_message_text);
-                } else {
-                    let posts_clone = app_data.timeline_posts.clone();
-                    for post in &posts_clone {
+        let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
+
+        if app_data.timeline_posts.is_empty() {
+            ui.label(no_timeline_message_text);
+        } else {
+            let num_posts = app_data.timeline_posts.len();
+            let row_height = 90.0;
+
+            egui::ScrollArea::vertical()
+                .id_salt("timeline_scroll_area")
+                .max_height(ui.available_height() - 100.0)
+                .show_rows(ui, row_height, num_posts, |ui, row_range| {
+                    for i in row_range {
+                        let post = app_data.timeline_posts[i].clone();
                         card_frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                // --- Profile Picture ---
                                 let avatar_size = egui::vec2(32.0, 32.0);
                                 let corner_radius = 4.0;
                                 let url = &post.author_metadata.picture;
@@ -266,7 +274,9 @@ pub fn draw_home_view(
                                             ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.error_fg_color.linear_multiply(0.2));
                                         }
                                         None => {
-                                            urls_to_load.push(url_key.clone());
+                                            if !urls_to_load.iter().any(|(u, _)| u == &url_key) {
+                                                urls_to_load.push((url_key.clone(), ImageKind::Avatar));
+                                            }
                                             let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
                                             ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
                                             ui.put(rect, egui::Spinner::new());
@@ -277,7 +287,7 @@ pub fn draw_home_view(
                                     ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
                                 }
 
-                                ui.add_space(8.0); // アイコンと名前の間のスペース
+                                ui.add_space(8.0);
 
                                 let display_name = if !post.author_metadata.name.is_empty() {
                                     post.author_metadata.name.clone()
@@ -287,13 +297,10 @@ pub fn draw_home_view(
                                 };
                                 ui.label(egui::RichText::new(display_name).strong().color(app_data.current_theme.text_color()));
 
-                                // --- Timestamp ---
                                 let created_at_datetime = chrono::DateTime::from_timestamp(post.created_at.as_u64() as i64, 0).unwrap();
                                 let local_datetime = created_at_datetime.with_timezone(&chrono::Local);
                                 ui.label(egui::RichText::new(local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()).color(egui::Color32::GRAY).small());
 
-
-                                // --- Context Menu ---
                                 if let Some(my_keys) = &app_data.my_keys {
                                     if post.author_pubkey != my_keys.public_key() {
                                         ui.menu_button("...", |ui| {
@@ -308,17 +315,49 @@ pub fn draw_home_view(
                                 }
                             });
                             ui.add_space(5.0);
-                            // Custom emoji rendering
-                            render_post_content(ui, app_data, post, &mut urls_to_load);
+                            render_post_content(ui, app_data, &post, &mut urls_to_load);
                         });
-                        ui.add_space(10.0);
                     }
-                }
-            });
-        });
+                });
+        }
 
+        // --- Image Loading Logic ---
+
+        // First, try to load images from the disk cache for URLs not in memory.
+        let mut still_to_load = Vec::new();
+        for (url_key, kind) in urls_to_load {
+            if let Some(image_bytes) = image_cache::load_from_disk(&url_key) {
+                // Image found on disk, process it directly.
+                // This is a simplification; for a smoother UI, this should be async.
+                if let Ok(mut dynamic_image) = image::load_from_memory(&image_bytes) {
+                    let (width, height) = match kind {
+                        ImageKind::Avatar => (32, 32),
+                        ImageKind::Emoji => (20, 20),
+                    };
+                    dynamic_image = dynamic_image.thumbnail(width, height);
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [dynamic_image.width() as usize, dynamic_image.height() as usize],
+                        dynamic_image.to_rgba8().as_flat_samples().as_slice(),
+                    );
+                    let texture_handle = ctx.load_texture(
+                        &url_key,
+                        color_image,
+                        Default::default()
+                    );
+                    app_data.image_cache.insert(url_key, ImageState::Loaded(texture_handle));
+                } else {
+                    // Failed to decode, mark as failed.
+                    app_data.image_cache.insert(url_key, ImageState::Failed);
+                }
+            } else {
+                // Not on disk, queue for network download.
+                still_to_load.push((url_key, kind));
+            }
+        }
+
+        // Fetch remaining images from the network.
         let data_clone = app_data_arc.clone();
-        for url_key in urls_to_load {
+        for (url_key, kind) in still_to_load {
             app_data.image_cache.insert(url_key.clone(), ImageState::Loading);
             app_data.should_repaint = true;
 
@@ -330,8 +369,17 @@ pub fn draw_home_view(
                 let new_state = match result {
                     Ok(response) => {
                         if response.ok {
+                            // Save to disk cache first.
+                            image_cache::save_to_disk(&response.url, &response.bytes);
+
                             match image::load_from_memory(&response.bytes) {
-                                Ok(dynamic_image) => {
+                                Ok(mut dynamic_image) => {
+                                    let (width, height) = match kind {
+                                        ImageKind::Avatar => (32, 32),
+                                        ImageKind::Emoji => (20, 20),
+                                    };
+                                    dynamic_image = dynamic_image.thumbnail(width, height);
+
                                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
                                         [dynamic_image.width() as usize, dynamic_image.height() as usize],
                                         dynamic_image.to_rgba8().as_flat_samples().as_slice(),
@@ -373,7 +421,6 @@ pub fn draw_home_view(
                         Ok(new_followed_pubkeys) => {
                             let mut app_data = cloned_app_data_arc.lock().unwrap();
                             app_data.followed_pubkeys = new_followed_pubkeys;
-                            // キャッシュも更新
                             if let Some(keys) = &app_data.my_keys {
                                 let pubkey_hex = keys.public_key().to_string();
                                 if let Err(e) = cache_db_clone.write_cache(DB_FOLLOWED, &pubkey_hex, &app_data.followed_pubkeys) {
@@ -393,7 +440,6 @@ pub fn draw_home_view(
         }
     });
 
-    // --- フローティングアクションボタン (FAB) ---
     egui::Area::new("fab_area".into())
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -20.0))
