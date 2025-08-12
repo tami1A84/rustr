@@ -2,6 +2,7 @@ pub mod login_view;
 pub mod home_view;
 pub mod relays_view;
 pub mod profile_view;
+pub mod image_cache;
 
 use eframe::egui::{self, Margin};
 // nostr v0.43.0 / nostr-sdk: RelayMetadata は nostr_sdk::nips::nip65 に移動したため import する
