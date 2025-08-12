@@ -1,6 +1,6 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
-use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32, EventId};
+use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32, EventId, Timestamp};
 use regex::Regex;
 
 use crate::{
@@ -114,16 +114,43 @@ pub fn draw_home_view(
                     .show_inside(ui, |ui| {
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
+                            // Emoji picker placeholder
+                            if ui.button("😀").clicked() {
+                                // TODO: Implement emoji picker
+                            }
+
+                            // Music status button
+                            if ui.button("🎵").clicked() {
+                                app_data.show_music_dialog = true;
+                            }
+
+                            // Podcast status button
+                            if ui.button("🎤").clicked() {
+                                app_data.show_podcast_dialog = true;
+                            }
+
                             let count = app_data.status_message_input.chars().count();
-                            let mut counter_text = egui::RichText::new(format!("{}/{}", count, MAX_STATUS_LENGTH));
-                            if count > MAX_STATUS_LENGTH {
+                            let counter_string = if app_data.current_status_type == StatusType::General {
+                                format!("{}/{}", count, MAX_STATUS_LENGTH)
+                            } else {
+                                format!("{}", count)
+                            };
+                            let mut counter_text = egui::RichText::new(counter_string);
+                            if app_data.current_status_type == StatusType::General && count > MAX_STATUS_LENGTH {
                                 counter_text = counter_text.color(egui::Color32::RED);
                             }
                             ui.label(counter_text);
 
+
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.button(cancel_button_text).clicked() {
                                     app_data.show_post_dialog = false;
+                                    app_data.current_status_type = StatusType::General;
+                                    app_data.status_message_input.clear();
+                                    app_data.music_track_input.clear();
+                                    app_data.music_url_input.clear();
+                                    app_data.podcast_episode_input.clear();
+                                    app_data.podcast_url_input.clear();
                                 }
                                 if ui.button(publish_button_text).clicked() && !app_data.is_loading {
                                     let status_message = app_data.status_message_input.clone();
@@ -134,20 +161,52 @@ pub fn draw_home_view(
                                     app_data.should_repaint = true;
                                     println!("Publishing NIP-38 status...");
 
-                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
+                                    if app_data.current_status_type == StatusType::General && status_message.chars().count() > MAX_STATUS_LENGTH {
                                         eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
                                         app_data.is_loading = false;
                                         app_data.should_repaint = true;
                                         return;
                                     }
 
+                                    let current_status_type = app_data.current_status_type;
+                                    let music_url = app_data.music_url_input.clone();
+                                    let podcast_url = app_data.podcast_url_input.clone();
+
                                     let cloned_app_data_arc = app_data_arc.clone();
                                     runtime_handle.spawn(async move {
-                                        let d_tag_value = "general".to_string();
+                                        let mut tags: Vec<Tag> = Vec::new();
+
+                                        let d_tag_value = match current_status_type {
+                                            StatusType::General => "general",
+                                            StatusType::Music | StatusType::Podcast => "music",
+                                        };
+                                        tags.push(Tag::identifier(d_tag_value.to_string()));
+
+                                        let r_url = match current_status_type {
+                                            StatusType::Music => music_url,
+                                            StatusType::Podcast => podcast_url,
+                                            _ => String::new(),
+                                        };
+
+                                        if !r_url.is_empty() {
+                                            let r_tag_vec: Vec<String> = vec!["r".to_string(), r_url];
+                                            if let Ok(tag) = Tag::parse(r_tag_vec) {
+                                                tags.push(tag);
+                                            }
+                                        }
+
+                                        if current_status_type != StatusType::General {
+                                            let expiration_time = chrono::Utc::now().timestamp() + 30 * 60; // 30 minutes
+                                            tags.push(Tag::expiration(Timestamp::from(
+                                                expiration_time as u64,
+                                            )));
+                                        }
+
                                         let event_result = EventBuilder::new(Kind::from(30315), status_message.clone())
-                                            .tags(vec![Tag::identifier(d_tag_value)])
+                                            .tags(tags)
                                             .sign(&keys_clone_nip38_send)
                                             .await;
+
                                         match event_result {
                                             Ok(event) => match client_clone_nip38_send.send_event(&event).await {
                                                 Ok(event_id) => {
@@ -155,6 +214,11 @@ pub fn draw_home_view(
                                                     let mut data = cloned_app_data_arc.lock().unwrap();
                                                     data.status_message_input.clear();
                                                     data.show_post_dialog = false;
+                                                    data.current_status_type = StatusType::General;
+                                                    data.music_track_input.clear();
+                                                    data.music_url_input.clear();
+                                                    data.podcast_episode_input.clear();
+                                                    data.podcast_url_input.clear();
                                                 }
                                                 Err(e) => {
                                                     eprintln!("Failed to publish status: {e}");
@@ -182,6 +246,100 @@ pub fn draw_home_view(
                                 .desired_width(f32::INFINITY)
                                 .hint_text(status_input_hint_text),
                         );
+                    });
+                });
+            });
+    }
+
+    // --- Music Status Dialog ---
+    if app_data.show_music_dialog {
+        egui::Window::new("音楽ステータスを設定")
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(10.0);
+                    ui.label("曲名");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app_data.music_track_input)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Sayonara - Gen Hoshino"),
+                    );
+                    ui.add_space(10.0);
+                    ui.label("URL（任意）");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app_data.music_url_input)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("spotify:track:39tH2BvK2r9Vv1A25Gf3fB"),
+                    );
+                    ui.add_space(10.0);
+                });
+
+                ui.separator();
+                ui.add_space(5.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("キャンセル").clicked() {
+                        app_data.show_music_dialog = false;
+                        app_data.music_track_input.clear();
+                        app_data.music_url_input.clear();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("ステータスを設定").clicked() {
+                            if !app_data.music_track_input.is_empty() {
+                                app_data.status_message_input = app_data.music_track_input.clone();
+                                app_data.current_status_type = StatusType::Music;
+                                app_data.show_music_dialog = false;
+                            }
+                        }
+                    });
+                });
+            });
+    }
+
+    // --- Podcast Status Dialog ---
+    if app_data.show_podcast_dialog {
+        egui::Window::new("ポッドキャストステータスを設定")
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(10.0);
+                    ui.label("エピソードのタイトル");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app_data.podcast_episode_input)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("コジ10 小島秀夫の『最高の10時にしよう』"),
+                    );
+                    ui.add_space(10.0);
+                    ui.label("URL（任意）");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app_data.podcast_url_input)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("https://open.spotify.com/episode/..."),
+                    );
+                    ui.add_space(10.0);
+                });
+
+                ui.separator();
+                ui.add_space(5.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("キャンセル").clicked() {
+                        app_data.show_podcast_dialog = false;
+                        app_data.podcast_episode_input.clear();
+                        app_data.podcast_url_input.clear();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("ステータスを設定").clicked() {
+                            if !app_data.podcast_episode_input.is_empty() {
+                                app_data.status_message_input = app_data.podcast_episode_input.clone();
+                                app_data.current_status_type = StatusType::Podcast;
+                                app_data.show_podcast_dialog = false;
+                            }
+                        }
                     });
                 });
             });
