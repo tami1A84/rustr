@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32, EventId, Timestamp};
 use regex::Regex;
 
@@ -13,9 +14,10 @@ use crate::{
 
 fn render_post_content(
     ui: &mut egui::Ui,
-    app_data: &mut NostrStatusAppInternal,
+    app_data: &NostrStatusAppInternal,
     post: &TimelinePost,
     urls_to_load: &mut Vec<(String, ImageKind)>,
+    my_emojis: &HashMap<String, String>,
 ) {
     let text_color = app_data.current_theme.text_color();
 
@@ -63,7 +65,8 @@ fn render_post_content(
                 ui.label(egui::RichText::new(pre_text).color(text_color));
             }
 
-            if let Some(url) = post.emojis.get(shortcode) {
+            let url = post.emojis.get(shortcode).or_else(|| my_emojis.get(shortcode));
+            if let Some(url) = url {
                 let emoji_size = egui::vec2(20.0, 20.0);
                 let url_key = url.to_string();
 
@@ -591,7 +594,7 @@ pub fn draw_home_view(
                                 }
                             });
                             ui.add_space(5.0);
-                            render_post_content(ui, app_data, &post, &mut urls_to_load);
+                            render_post_content(ui, app_data, &post, &mut urls_to_load, &app_data.my_emojis);
                         });
                     }
                 });
