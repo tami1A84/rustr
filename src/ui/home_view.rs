@@ -17,9 +17,41 @@ fn render_post_content(
     post: &TimelinePost,
     urls_to_load: &mut Vec<(String, ImageKind)>,
 ) {
+    let text_color = app_data.current_theme.text_color();
+
+    // Check for music/podcast status
+    let d_tag = post
+        .tags
+        .iter()
+        .find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("d"));
+
+    if let Some(tag) = d_tag {
+        let tag_vec = tag.clone().to_vec();
+        if tag_vec.get(1).map(|s| s.as_str()) == Some("music") {
+            // Music or Podcast status
+            ui.horizontal(|ui| {
+                ui.label("🎵"); // Use a general music icon for now
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(&post.content).color(text_color));
+                    let r_tag = post
+                        .tags
+                        .iter()
+                        .find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("r"));
+                    if let Some(r_tag_value) = r_tag.and_then(|t| t.clone().to_vec().get(1).cloned()) {
+                        ui.hyperlink_to(
+                            egui::RichText::new(&r_tag_value).small().color(egui::Color32::GRAY),
+                            r_tag_value,
+                        );
+                    }
+                });
+            });
+            return; // Don't render general content
+        }
+    }
+
+    // General status (with emojis)
     let re = Regex::new(r":(\w+):").unwrap();
     let mut last_end = 0;
-    let text_color = app_data.current_theme.text_color();
 
     ui.horizontal_wrapped(|ui| {
         for cap in re.captures_iter(&post.content) {
