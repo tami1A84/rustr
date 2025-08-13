@@ -66,6 +66,7 @@ pub struct EditableRelay {
 pub enum ImageKind {
     Avatar,
     Emoji,
+    ProfilePicture,
 }
 
 #[derive(Clone)]
@@ -120,6 +121,20 @@ impl AppTheme {
         match self {
             AppTheme::Light => egui::Color32::BLACK,
             AppTheme::Dark => egui::Color32::WHITE,
+        }
+    }
+
+    pub fn danger_zone_background_color(&self) -> egui::Color32 {
+        match self {
+            AppTheme::Light => egui::Color32::from_rgb(255, 235, 238),
+            AppTheme::Dark => egui::Color32::from_rgb(60, 40, 40),
+        }
+    }
+
+    pub fn danger_zone_stroke_color(&self) -> egui::Color32 {
+        match self {
+            AppTheme::Light => egui::Color32::from_rgb(255, 180, 180),
+            AppTheme::Dark => egui::Color32::from_rgb(120, 60, 60),
         }
     }
 }

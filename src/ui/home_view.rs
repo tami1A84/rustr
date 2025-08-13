@@ -599,16 +599,18 @@ pub fn draw_home_view(
 
         // --- Image Loading Logic ---
 
-        // First, try to load images from the disk cache for URLs not in memory.
+        // First, try to load images from the LMDB cache for URLs not in memory.
+        let cache_db = app_data.cache_db.clone();
         let mut still_to_load = Vec::new();
         for (url_key, kind) in urls_to_load {
-            if let Some(image_bytes) = image_cache::load_from_disk(&url_key) {
-                // Image found on disk, process it directly.
+            if let Some(image_bytes) = image_cache::load_from_lmdb(&cache_db, &url_key) {
+                // Image found in cache, process it directly.
                 // This is a simplification; for a smoother UI, this should be async.
                 if let Ok(mut dynamic_image) = image::load_from_memory(&image_bytes) {
                     let (width, height) = match kind {
                         ImageKind::Avatar => (32, 32),
                         ImageKind::Emoji => (20, 20),
+                    _ => (32, 32), // Default for Banner, ProfilePicture, etc.
                     };
                     dynamic_image = dynamic_image.thumbnail(width, height);
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
@@ -639,20 +641,22 @@ pub fn draw_home_view(
 
             let app_data_clone = data_clone.clone();
             let ctx_clone = ctx.clone();
+            let cache_db_for_fetch = app_data.cache_db.clone();
             let request = ehttp::Request::get(&url_key);
 
             ehttp::fetch(request, move |result| {
                 let new_state = match result {
                     Ok(response) => {
                         if response.ok {
-                            // Save to disk cache first.
-                            image_cache::save_to_disk(&response.url, &response.bytes);
+                            // Save to LMDB cache first.
+                            image_cache::save_to_lmdb(&cache_db_for_fetch, &response.url, &response.bytes);
 
                             match image::load_from_memory(&response.bytes) {
                                 Ok(mut dynamic_image) => {
                                     let (width, height) = match kind {
                                         ImageKind::Avatar => (32, 32),
                                         ImageKind::Emoji => (20, 20),
+                                    _ => (32, 32), // Default for Banner, ProfilePicture, etc.
                                     };
                                     dynamic_image = dynamic_image.thumbnail(width, height);
 
