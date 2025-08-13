@@ -395,6 +395,7 @@ pub async fn fetch_timeline_events(
                     content: event.content.clone(),
                     created_at: event.created_at,
                     emojis,
+                    tags: event.tags.to_vec(),
                 });
             }
             timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));

@@ -84,6 +84,8 @@ pub struct TimelinePost {
     pub created_at: Timestamp,
     #[serde(default)]
     pub emojis: HashMap<String, String>,
+    #[serde(default)]
+    pub tags: Vec<nostr::Tag>,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
