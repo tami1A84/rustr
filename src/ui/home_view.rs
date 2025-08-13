@@ -84,6 +84,7 @@ pub fn draw_home_view(
     app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
     runtime_handle: tokio::runtime::Handle,
 ) {
+    let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
     let new_post_window_title_text = "新規投稿";
     let status_input_hint_text = "いまどうしてる？";
     let publish_button_text = "公開";
@@ -114,9 +115,8 @@ pub fn draw_home_view(
                     .show_inside(ui, |ui| {
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            // Emoji picker placeholder
                             if ui.button("😀").clicked() {
-                                // TODO: Implement emoji picker
+                                app_data.show_emoji_picker = !app_data.show_emoji_picker;
                             }
 
                             // Music status button
@@ -172,9 +172,27 @@ pub fn draw_home_view(
                                     let music_url = app_data.music_url_input.clone();
                                     let podcast_url = app_data.podcast_url_input.clone();
 
+                                    let my_emojis = app_data.my_emojis.clone();
                                     let cloned_app_data_arc = app_data_arc.clone();
                                     runtime_handle.spawn(async move {
                                         let mut tags: Vec<Tag> = Vec::new();
+
+                                        // --- Emoji Tags ---
+                                        let re = Regex::new(r":(\w+):").unwrap();
+                                        let mut used_emojis: std::collections::HashSet<String> = std::collections::HashSet::new();
+                                        for cap in re.captures_iter(&status_message) {
+                                            if let Some(shortcode) = cap.get(1) {
+                                                used_emojis.insert(shortcode.as_str().to_string());
+                                            }
+                                        }
+                                        for shortcode in used_emojis {
+                                            if let Some(url) = my_emojis.get(&shortcode) {
+                                                let tag_vec: Vec<&str> = vec!["emoji", &shortcode, url];
+                                                if let Ok(tag) = Tag::parse(tag_vec) {
+                                                    tags.push(tag);
+                                                }
+                                            }
+                                        }
 
                                         let d_tag_value = match current_status_type {
                                             StatusType::General => "general",
@@ -249,6 +267,63 @@ pub fn draw_home_view(
                     });
                 });
             });
+
+        if app_data.show_emoji_picker {
+            egui::Window::new("カスタム絵文字")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 180.0)) // Adjust position to be below the post dialog
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("絵文字を選択");
+                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP).with_main_wrap(true), |ui| {
+                            if app_data.my_emojis.is_empty() {
+                                ui.label("カスタム絵文字が設定されていません。");
+                            } else {
+                                for (shortcode, url) in app_data.my_emojis.clone().into_iter() {
+                                    let emoji_size = egui::vec2(24.0, 24.0);
+                                    let url_key = url.to_string();
+
+                                    let sense = egui::Sense::click();
+                                    let (rect, response) = ui.allocate_exact_size(emoji_size, sense);
+
+                                    if response.hovered() {
+                                        ui.painter().rect_filled(rect.expand(2.0), egui::CornerRadius::from(4.0), ui.visuals().widgets.hovered.bg_fill);
+                                    }
+
+                                    match app_data.image_cache.get(&url_key) {
+                                        Some(ImageState::Loaded(texture_handle)) => {
+                                            let image = egui::Image::new(texture_handle).fit_to_exact_size(emoji_size);
+                                            image.paint_at(ui, rect);
+                                        }
+                                        Some(ImageState::Loading) => {
+                                            ui.put(rect, egui::Spinner::new());
+                                        }
+                                        Some(ImageState::Failed) => {
+                                            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "💔", egui::FontId::default(), ui.visuals().error_fg_color);
+                                        }
+                                        None => {
+                                            if !urls_to_load.iter().any(|(u, _)| u == &url_key) {
+                                                urls_to_load.push((url_key.clone(), ImageKind::Emoji));
+                                            }
+                                            ui.put(rect, egui::Spinner::new());
+                                        }
+                                    }
+
+                                    if response.clicked() {
+                                        app_data.status_message_input.push_str(&format!(":{}:", shortcode));
+                                        app_data.show_emoji_picker = false;
+                                    }
+                                    response.on_hover_text(format!(":{}:", shortcode));
+                                }
+                            }
+                        });
+                    });
+                    if ui.button("閉じる").clicked() {
+                        app_data.show_emoji_picker = false;
+                    }
+                });
+        }
     }
 
     // --- Music Status Dialog ---
@@ -403,7 +478,6 @@ pub fn draw_home_view(
         });
         ui.add_space(10.0);
         let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
-        let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
 
         if app_data.timeline_posts.is_empty() {
             ui.label(no_timeline_message_text);
