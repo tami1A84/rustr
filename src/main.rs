@@ -166,6 +166,8 @@ impl NostrStatusApp {
             is_logged_in: false,
             status_message_input: String::new(),
             show_post_dialog: false,
+            show_emoji_picker: false,
+            my_emojis: HashMap::new(),
             secret_key_input: String::new(),
             passphrase_input: String::new(),
             confirm_passphrase_input: String::new(),

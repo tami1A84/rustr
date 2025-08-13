@@ -48,6 +48,8 @@ pub struct ProfileMetadata {
     #[serde(default)]
     pub nip05: String,
     #[serde(default)]
+    pub emojis: Vec<[String; 2]>,
+    #[serde(default)]
     pub lud16: String,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -125,6 +127,8 @@ pub struct NostrStatusAppInternal {
     pub is_logged_in: bool,
     pub status_message_input: String,
     pub show_post_dialog: bool,
+    pub show_emoji_picker: bool,
+    pub my_emojis: HashMap<String, String>,
     pub secret_key_input: String,
     pub passphrase_input: String,
     pub confirm_passphrase_input: String,

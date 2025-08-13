@@ -238,6 +238,11 @@ pub fn draw_login_view(
                                 };
                                 EditableRelay { url, read, write }
                             }).collect();
+                            let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
+                                .iter()
+                                .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
+                                .collect();
+                            app_data.my_emojis = my_emojis;
                             app_data.editable_profile = fresh_data.profile_metadata;
                             app_data.nip01_profile_display = fresh_data.profile_json_string;
                             app_data.profile_fetch_status = "Profile loaded.".to_string();
@@ -346,6 +351,11 @@ pub fn draw_login_view(
                                 };
                                 EditableRelay { url, read, write }
                             }).collect();
+                            let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
+                                .iter()
+                                .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
+                                .collect();
+                            app_data.my_emojis = my_emojis;
                             app_data.editable_profile = fresh_data.profile_metadata;
                             app_data.nip01_profile_display = fresh_data.profile_json_string;
                             app_data.profile_fetch_status = "Profile loaded.".to_string();
