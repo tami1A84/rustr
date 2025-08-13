@@ -172,7 +172,7 @@ pub fn draw_login_view(
                 app_data.is_loading = true;
                 app_data.should_repaint = true;
                 let cloned_app_data_arc = app_data_arc.clone();
-                runtime_handle.spawn(async move {
+                runtime_handle.clone().spawn(async move {
                     let login_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                         let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                             let config_str = fs::read_to_string(CONFIG_FILE)?;
@@ -230,7 +230,7 @@ pub fn draw_login_view(
                             if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
                                 app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
                             }
-                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.clone().into_iter().map(|(url, policy)| {
                                 let (read, write) = match policy.as_deref() {
                                     Some("read") => (true, false),
                                     Some("write") => (false, true),
@@ -246,6 +246,37 @@ pub fn draw_login_view(
                             app_data.editable_profile = fresh_data.profile_metadata;
                             app_data.nip01_profile_display = fresh_data.profile_json_string;
                             app_data.profile_fetch_status = "Profile loaded.".to_string();
+
+                            // --- Fetch NIP-30/51 Emojis with fallback ---
+                            let pubkey = keys.public_key();
+                            let nip65_relays = fresh_data.fetched_nip65_relays.clone();
+                            let app_data_clone_for_emojis = cloned_app_data_arc.clone();
+                            runtime_handle.clone().spawn(async move {
+                                println!("Spawning emoji fetch task for kind:30030...");
+                                let nip65_urls: Vec<String> = nip65_relays.iter().map(|(url, _)| url.clone()).collect();
+
+                                let mut custom_emojis = crate::emoji_loader::fetch_emoji_sets(&nip65_urls, pubkey).await;
+
+                                if custom_emojis.is_empty() {
+                                    println!("No emojis found in NIP-65 relays, trying default relays...");
+                                    let default_relays_str = {
+                                        let app_data = app_data_clone_for_emojis.lock().unwrap();
+                                        app_data.default_relays_editor.clone()
+                                    };
+                                    let default_relay_urls: Vec<String> = default_relays_str.lines().map(String::from).collect();
+                                    custom_emojis = crate::emoji_loader::fetch_emoji_sets(&default_relay_urls, pubkey).await;
+                                }
+
+                                if !custom_emojis.is_empty() {
+                                    println!("Fetched {} custom emojis from kind:30030.", custom_emojis.len());
+                                    let mut app_data = app_data_clone_for_emojis.lock().unwrap();
+                                    app_data.my_emojis.extend(custom_emojis);
+                                    app_data.should_repaint = true;
+                                } else {
+                                    println!("No custom emojis found from NIP-65 or default relays.");
+                                }
+                            });
+                            // --- End Fetch Emojis ---
                         } else if let Err(e) = fresh_data_result {
                             let mut app_data = cloned_app_data_arc.lock().unwrap();
                             app_data.profile_fetch_status = format!("Failed to refresh data: {e}");
@@ -295,7 +326,7 @@ pub fn draw_login_view(
                 app_data.is_loading = true;
                 app_data.should_repaint = true;
                 let cloned_app_data_arc = app_data_arc.clone();
-                runtime_handle.spawn(async move {
+                runtime_handle.clone().spawn(async move {
                     if passphrase != confirm_passphrase {
                         let mut current_app_data = cloned_app_data_arc.lock().unwrap();
                         current_app_data.profile_fetch_status = "Passphrases do not match.".to_string();
@@ -334,7 +365,7 @@ pub fn draw_login_view(
                         let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
                         if let Ok(fresh_data) = fresh_data_result {
                             let mut app_data = cloned_app_data_arc.lock().unwrap();
-                            app_data.my_keys = Some(keys);
+                            app_data.my_keys = Some(keys.clone());
                             app_data.nostr_client = Some(client);
                             app_data.is_logged_in = true;
                             app_data.current_tab = AppTab::Home;
@@ -343,7 +374,7 @@ pub fn draw_login_view(
                             if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
                                 app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
                             }
-                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.into_iter().map(|(url, policy)| {
+                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.clone().into_iter().map(|(url, policy)| {
                                 let (read, write) = match policy.as_deref() {
                                     Some("read") => (true, false),
                                     Some("write") => (false, true),
@@ -359,6 +390,37 @@ pub fn draw_login_view(
                             app_data.editable_profile = fresh_data.profile_metadata;
                             app_data.nip01_profile_display = fresh_data.profile_json_string;
                             app_data.profile_fetch_status = "Profile loaded.".to_string();
+
+                            // --- Fetch NIP-30/51 Emojis with fallback ---
+                            let pubkey = keys.public_key();
+                            let nip65_relays = fresh_data.fetched_nip65_relays.clone();
+                            let app_data_clone_for_emojis = cloned_app_data_arc.clone();
+                            runtime_handle.clone().spawn(async move {
+                                println!("Spawning emoji fetch task for kind:30030...");
+                                let nip65_urls: Vec<String> = nip65_relays.iter().map(|(url, _)| url.clone()).collect();
+
+                                let mut custom_emojis = crate::emoji_loader::fetch_emoji_sets(&nip65_urls, pubkey).await;
+
+                                if custom_emojis.is_empty() {
+                                    println!("No emojis found in NIP-65 relays, trying default relays...");
+                                    let default_relays_str = {
+                                        let app_data = app_data_clone_for_emojis.lock().unwrap();
+                                        app_data.default_relays_editor.clone()
+                                    };
+                                    let default_relay_urls: Vec<String> = default_relays_str.lines().map(String::from).collect();
+                                    custom_emojis = crate::emoji_loader::fetch_emoji_sets(&default_relay_urls, pubkey).await;
+                                }
+
+                                if !custom_emojis.is_empty() {
+                                    println!("Fetched {} custom emojis from kind:30030.", custom_emojis.len());
+                                    let mut app_data = app_data_clone_for_emojis.lock().unwrap();
+                                    app_data.my_emojis.extend(custom_emojis);
+                                    app_data.should_repaint = true;
+                                } else {
+                                    println!("No custom emojis found from NIP-65 or default relays.");
+                                }
+                            });
+                            // --- End Fetch Emojis ---
                         } else if let Err(e) = fresh_data_result {
                             eprintln!("Failed to fetch initial data for registration: {e}");
                         }
