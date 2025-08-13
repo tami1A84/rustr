@@ -13,22 +13,26 @@
 
 ## スクリーンショット
 
+> **注:** スクリーンショットは現在のバージョンと異なる場合があります。
+
 ![Login Screen](images/login_screen.png)
 ![Home Screen](images/home_screen.png)
+![Post Screen](images/post_screen.png)
 ![Relays Screen](images/relays_screen.png)
 ![Profile Screen](images/profile_screen.png)
 
 ## 特徴
 
 *   **洗練されたUI:** `egui`とLINE Seed JPフォントを採用し、モダンなmacOS風のデザインで、ライトモードとダークモードの両方に対応しています。
-*   **ステータス投稿 (NIP-38):** NIP-38 (`kind:30315`) を使用して、あなたの現在の「ステータス」を簡単に投稿できます。これは上書き可能なイベントのため、常に最新の状況を共有できます。
+*   **多彩なステータス投稿 (NIP-38):** 一般的なステータスのほか、「音楽」「ポッドキャスト」など、種類に応じた専用の投稿が可能です。これは上書き可能なイベントのため、常に最新の状況を共有できます。
+*   **カスタム絵文字対応 (NIP-30):** あなたのNostrプロファイルで設定したカスタム絵文字を投稿に利用できます。
 *   **プロフィールの表示と編集 (NIP-01):** Nostrのプロフィール情報を表示し、編集することができます。
 *   **安全な鍵管理 (NIP-49):** 秘密鍵はローカルに保存されます。あなたのパスフレーズからPBKDF2で導出された鍵を使い、ChaCha20Poly1305で暗号化されるため安全です。
 *   **高度なリレー管理と投稿取得 (NIP-65, NIP-02):**
     *   **あなたのリレー:** ログイン時にあなたのNIP-65リレーリストに自動接続します。リストがない場合はデフォルトリレーを使用します。
     *   **投稿の取得:** フォローしているユーザー(NIP-02)のNIP-65リレーリストを別途取得し、そこからステータス投稿を検索することで、取りこぼしの少ないタイムラインを実現します。
     *   **リレーリストの編集:** アプリ内からリレーの追加・削除、読み書き権限の設定、NIP-65リストの公開が可能です。
-*   **効率的なキャッシュ機構:** プロフィール、フォローリスト、リレーリスト、タイムラインなどをLMDB（ローカルデータベース）にキャッシュすることで、2回目以降の起動とデータ表示を高速化します。
+*   **効率的なキャッシュとデータ移行:** プロフィール、フォローリスト、リレーリストなどをLMDBにキャッシュし、高速なデータ表示を実現します。旧バージョンからの移行時には、古いファイルベースのキャッシュから自動でデータを引き継ぎます。
 *   **タブ形式のインターフェース:** ホーム（タイムラインと投稿）、リレー、プロフィールのタブで簡単に機能を切り替えられます。
 *   **会話機能の排除:** このツールはステータス投稿専用です。リプライ、メンション、リアクションなどの会話機能は一切ありません。
 
@@ -78,22 +82,26 @@ This app removes social features like replies and likes to provide a pure status
 
 ## Screenshot
 
+> **Note:** Screenshots may differ from the current version.
+
 ![Login Screen](images/login_screen.png)
 ![Home Screen](images/home_screen.png)
+![Post Screen](images/post_screen.png)
 ![Relays Screen](images/relays_screen.png)
 ![Profile Screen](images/profile_screen.png)
 
 ## Features
 
 *   **Sophisticated UI:** A modern, macOS-inspired design using `egui` and the LINE Seed JP font, with both light and dark modes.
-*   **Post Status Updates (NIP-38):** Easily post your current "status" using NIP-38 (`kind:30315`). As a replaceable event, you can always share your latest update.
+*   **Versatile Status Posts (NIP-38):** In addition to general updates, you can post specialized statuses for "Music" and "Podcasts." As a replaceable event, you can always share your latest update.
+*   **Custom Emoji Support (NIP-30):** Use custom emojis defined in your Nostr profile in your posts.
 *   **Profile Display and Editing (NIP-01):** View and edit your Nostr profile information.
 *   **Secure Key Management (NIP-49):** Your secret key is stored locally and securely, encrypted with ChaCha20Poly1305 using a key derived from your passphrase via PBKDF2.
 *   **Advanced Relay Management & Post Fetching (NIP-65, NIP-02):**
     *   **Your Relays:** Automatically connects to your NIP-65 relay list on login, or falls back to default relays if none is found.
     *   **Post Fetching:** Achieves a more complete timeline by fetching the NIP-65 relay lists of users you follow (NIP-02) and searching for their statuses there.
     *   **Relay List Editing:** Add, remove, set read/write permissions, and publish your NIP-65 list directly from within the app.
-*   **Efficient Caching:** Caches profiles, follow lists, relay lists, and timelines in a local LMDB database for significantly faster startup and data loading on subsequent launches.
+*   **Efficient Caching & Data Migration:** Caches profiles, follow lists, relay lists, and more in a local LMDB database for faster performance. It also automatically migrates data from the old file-based cache for users updating from a previous version.
 *   **Tabbed Interface:** Easily switch between functions with tabs for Home (Posting), Relays, and Profile.
 *   **No Conversation Features:** This tool is for posting statuses only. There are no replies, mentions, reactions, or other conversational features.
 
