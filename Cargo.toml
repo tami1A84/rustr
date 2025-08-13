@@ -35,5 +35,7 @@ unic-langid = "0.9"
 intl-memoizer = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+futures-util = "0.3"
+async-tungstenite = { version = "0.26.0", features = ["tokio-runtime", "tokio-rustls-native-certs"] }
 
 

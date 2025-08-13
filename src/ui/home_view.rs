@@ -346,7 +346,7 @@ pub fn draw_home_view(
                                         app_data.status_message_input.push_str(&format!(":{}:", shortcode));
                                         app_data.show_emoji_picker = false;
                                     }
-                                    response.on_hover_text(format!(":{}:", shortcode));
+                                    response.on_hover_text(&format!(":{}:", shortcode));
                                 }
                             }
                         });

@@ -1,4 +1,5 @@
 mod cache_db;
+mod emoji_loader;
 mod nostr_client;
 mod ui;
 mod types;
