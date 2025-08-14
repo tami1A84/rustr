@@ -1,5 +1,6 @@
 mod cache_db;
 mod emoji_loader;
+mod nip49;
 mod nostr_client;
 mod ui;
 mod types;
@@ -199,6 +200,11 @@ impl NostrStatusApp {
                 "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
             current_theme: AppTheme::Light,
             image_cache: HashMap::new(),
+            nwc_passphrase_input: String::new(),
+            nwc: None,
+            nwc_client: None,
+            wallet_balance: None,
+            nwc_error: None,
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 
