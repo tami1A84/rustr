@@ -188,4 +188,5 @@ pub struct NostrStatusAppInternal {
     pub show_zap_dialog: bool,
     pub zap_amount_input: String,
     pub zap_target_post: Option<TimelinePost>,
+    pub generated_mnemonic: Option<String>,
 }
