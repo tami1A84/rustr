@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 regex = "1"
 heed = "0.20"
-nostr = "0.43.0"
+nostr = { version = "0.43.0", features = ["nip47"] }
 nostr-sdk = { version = "0.43.0", features = ["lmdb"] }
 tokio = { version = "1", features = ["full"] }
 chacha20poly1305 = "0.10"

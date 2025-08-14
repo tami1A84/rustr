@@ -1,5 +1,5 @@
 use eframe::egui;
-use nostr::{PublicKey, Timestamp, Keys, EventId};
+use nostr::{nips::nip47::NostrWalletConnectURI, PublicKey, Timestamp, Keys, EventId};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
@@ -13,6 +13,8 @@ use crate::cache_db::LmdbCache;
 pub struct Config {
     pub encrypted_secret_key: String,
     pub salt: String,
+    #[serde(default)]
+    pub encrypted_nwc_uri: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -175,4 +177,11 @@ pub struct NostrStatusAppInternal {
     pub default_relays_editor: String,
     pub current_theme: AppTheme,
     pub image_cache: HashMap<String, ImageState>,
+
+    // NWC
+    pub nwc_passphrase_input: String,
+    pub nwc: Option<NostrWalletConnectURI>,
+    pub nwc_client: Option<Client>,
+    pub wallet_balance: Option<u64>,
+    pub nwc_error: Option<String>,
 }

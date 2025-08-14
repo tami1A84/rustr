@@ -5,23 +5,12 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 use std::time::Duration;
 
-use nostr::{Filter, Keys, Kind, PublicKey};
+use nostr::{nips::nip47::NostrWalletConnectURI, Filter, Keys, Kind, PublicKey};
 use nostr_sdk::{Client, SubscribeAutoCloseOptions};
-
-// NIP-49 (ChaCha20Poly1305) のための暗号クレート
-use base64::{Engine as _, engine::general_purpose};
-use chacha20poly1305::{
-    ChaCha20Poly1305, Key, Nonce,
-    aead::{Aead, KeyInit},
-};
-use rand::Rng;
-use rand::rngs::OsRng;
-// PBKDF2のためのクレート
-use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
+use std::str::FromStr;
 
 use crate::{
-    types::{NostrStatusAppInternal, Config, EditableRelay, AppTab, ProfileMetadata, TimelinePost},
+    types::{Config, EditableRelay, NostrStatusAppInternal, ProfileMetadata, TimelinePost, AppTab},
     cache_db::{LmdbCache, DB_FOLLOWED, DB_RELAYS, DB_PROFILES, DB_TIMELINE},
     CONFIG_FILE,
     nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_timeline_events}
@@ -173,33 +162,55 @@ pub fn draw_login_view(
                 app_data.should_repaint = true;
                 let cloned_app_data_arc = app_data_arc.clone();
                 runtime_handle.clone().spawn(async move {
-                    let login_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-                        let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
+                    let app_data_for_login_logic = cloned_app_data_arc.clone();
+                    let login_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async move {
+                        let (keys, nwc_uri) = (|| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
                             let config_str = fs::read_to_string(CONFIG_FILE)?;
                             let config: Config = serde_json::from_str(&config_str)?;
-                            let retrieved_salt_bytes = general_purpose::STANDARD.decode(&config.salt)?;
-                            let mut derived_key_bytes = [0u8; 32];
-                            pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), &retrieved_salt_bytes, 100_000, &mut derived_key_bytes);
-                            let cipher_key = Key::from_slice(&derived_key_bytes);
-                            let cipher = ChaCha20Poly1305::new(cipher_key);
-                            let nip49_encoded = config.encrypted_secret_key;
-                            if !nip49_encoded.starts_with("#nip49:") { return Err("Invalid NIP-49 format".into()); }
-                            let decoded_bytes = general_purpose::STANDARD.decode(&nip49_encoded[7..])?;
-                            if decoded_bytes.len() < 12 { return Err("Invalid NIP-49 payload".into()); }
-                            let (ciphertext_and_tag, retrieved_nonce_bytes) = decoded_bytes.split_at(decoded_bytes.len() - 12);
-                            let retrieved_nonce = Nonce::from_slice(retrieved_nonce_bytes);
-                            let decrypted_bytes = cipher.decrypt(retrieved_nonce, ciphertext_and_tag).map_err(|_| "Incorrect passphrase")?;
-                            let decrypted_secret_key_hex = hex::encode(&decrypted_bytes);
-                            Ok(Keys::parse(&decrypted_secret_key_hex)?)
+                            let decrypted_bytes = crate::nip49::decrypt(
+                                &config.encrypted_secret_key,
+                                &passphrase,
+                                &config.salt,
+                            )?;
+                            let keys = Keys::parse(&hex::encode(&decrypted_bytes))?;
+
+                            let nwc_uri = if let Some(encrypted_nwc) = config.encrypted_nwc_uri {
+                                let decrypted_nwc_bytes = crate::nip49::decrypt(
+                                    &encrypted_nwc,
+                                    &passphrase,
+                                    &config.salt,
+                                )?;
+                                let nwc_uri_str = String::from_utf8(decrypted_nwc_bytes)?;
+                                Some(NostrWalletConnectURI::from_str(&nwc_uri_str)?)
+                            } else {
+                                None
+                            };
+                            Ok((keys, nwc_uri))
                         })()?;
+
+                        if let Some(uri) = nwc_uri {
+                            let app_data_for_nwc_task = app_data_for_login_logic.clone();
+                            runtime_handle.clone().spawn(async move {
+                                if let Err(e) =
+                                    super::wallet_view::connect_nwc(uri, app_data_for_nwc_task.clone())
+                                        .await
+                                {
+                                    eprintln!("Failed to connect to NWC: {}", e);
+                                    let mut app_data =
+                                        app_data_for_nwc_task.lock().unwrap();
+                                    app_data.nwc_error = Some(format!("NWC auto-connect failed: {}", e));
+                                }
+                            });
+                        }
+
                         let client = Client::new(keys.clone());
                         let pubkey_hex = keys.public_key().to_string();
                         let (discover_relays, default_relays) = {
-                            let app_data = cloned_app_data_arc.lock().unwrap();
+                            let app_data = app_data_for_login_logic.lock().unwrap();
                             (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
                         };
                         if let Ok(cached_data) = load_data_from_cache(&cache_db_clone, &pubkey_hex) {
-                            let mut app_data = cloned_app_data_arc.lock().unwrap();
+                            let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.my_keys = Some(keys.clone());
                             app_data.nostr_client = Some(client.clone());
                             app_data.followed_pubkeys = cached_data.followed_pubkeys;
@@ -216,7 +227,7 @@ pub fn draw_login_view(
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
                         } else {
-                            let mut app_data = cloned_app_data_arc.lock().unwrap();
+                            let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.my_keys = Some(keys.clone());
                             app_data.nostr_client = Some(client.clone());
                             app_data.is_logged_in = true;
@@ -224,7 +235,7 @@ pub fn draw_login_view(
                         }
                         let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
                         if let Ok(fresh_data) = fresh_data_result {
-                            let mut app_data = cloned_app_data_arc.lock().unwrap();
+                            let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.followed_pubkeys = fresh_data.followed_pubkeys;
                             app_data.timeline_posts = fresh_data.timeline_posts;
                             if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
@@ -250,7 +261,7 @@ pub fn draw_login_view(
                             // --- Fetch NIP-30/51 Emojis with fallback ---
                             let pubkey = keys.public_key();
                             let nip65_relays = fresh_data.fetched_nip65_relays.clone();
-                            let app_data_clone_for_emojis = cloned_app_data_arc.clone();
+                            let app_data_clone_for_emojis = app_data_for_login_logic.clone();
                             runtime_handle.clone().spawn(async move {
                                 println!("Spawning emoji fetch task for kind:30030...");
                                 let nip65_urls: Vec<String> = nip65_relays.iter().map(|(url, _)| url.clone()).collect();
@@ -278,7 +289,7 @@ pub fn draw_login_view(
                             });
                             // --- End Fetch Emojis ---
                         } else if let Err(e) = fresh_data_result {
-                            let mut app_data = cloned_app_data_arc.lock().unwrap();
+                            let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.profile_fetch_status = format!("Failed to refresh data: {e}");
                         }
                         Ok(())
@@ -337,22 +348,14 @@ pub fn draw_login_view(
                     let registration_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                         let keys = (|| -> Result<Keys, Box<dyn std::error::Error + Send + Sync>> {
                             let user_provided_keys = Keys::parse(&secret_key_input)?;
-                            let mut salt_bytes = [0u8; 16];
-                            OsRng.fill(&mut salt_bytes);
-                            let salt_base64 = general_purpose::STANDARD.encode(salt_bytes);
-                            let mut derived_key_bytes = [0u8; 32];
-                            pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), &salt_bytes, 100_000, &mut derived_key_bytes);
-                            let cipher_key = Key::from_slice(&derived_key_bytes);
-                            let cipher = ChaCha20Poly1305::new(cipher_key);
                             let plaintext_bytes = user_provided_keys.secret_key().to_secret_bytes();
-                            let mut nonce_bytes: [u8; 12] = [0u8; 12];
-                            OsRng.fill(&mut nonce_bytes);
-                            let nonce = Nonce::from_slice(&nonce_bytes);
-                            let ciphertext_with_tag = cipher.encrypt(nonce, plaintext_bytes.as_slice()).map_err(|e| format!("NIP-49 encryption error: {e:?}"))?;
-                            let mut encoded_data = ciphertext_with_tag.clone();
-                            encoded_data.extend_from_slice(nonce_bytes.as_ref());
-                            let nip49_encoded = format!("#nip49:{}", general_purpose::STANDARD.encode(&encoded_data));
-                            let config = Config { encrypted_secret_key: nip49_encoded, salt: salt_base64 };
+                            let (nip49_encoded, salt_base64) =
+                                crate::nip49::encrypt(&plaintext_bytes, &passphrase)?;
+                            let config = Config {
+                                encrypted_secret_key: nip49_encoded,
+                                salt: salt_base64,
+                                encrypted_nwc_uri: None,
+                            };
                             let config_json = serde_json::to_string_pretty(&config)?;
                             fs::write(CONFIG_FILE, config_json)?;
                             Ok(user_provided_keys)
