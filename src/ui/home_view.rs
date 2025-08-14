@@ -128,22 +128,6 @@ pub fn draw_home_view(
     let fetch_latest_button_text = "最新の投稿を取得";
     let no_timeline_message_text = "タイムラインに投稿はまだありません。";
 
-    // --- ZAP Status Message ---
-    let mut clear_status_message = false;
-    if let Some(status) = &app_data.zap_status_message {
-        let status_clone = status.clone();
-        ui.horizontal(|ui|{
-            ui.label(status_clone);
-            if ui.button("x").clicked() {
-                clear_status_message = true;
-            }
-        });
-    }
-    if clear_status_message {
-        app_data.zap_status_message = None;
-    }
-
-
     let card_frame = egui::Frame {
         inner_margin: egui::Margin::same(12),
         corner_radius: 8.0.into(),
@@ -200,7 +184,6 @@ pub fn draw_home_view(
                                         runtime_handle.spawn(async move {
                                             {
                                                 let mut data = app_data_clone.lock().unwrap();
-                                                data.zap_status_message = Some("ZAPを送信中...".to_string());
                                                 data.should_repaint = true;
                                             } // Lock is dropped here
 
@@ -217,10 +200,10 @@ pub fn draw_home_view(
                                             let mut data = app_data_clone.lock().unwrap();
                                             match result {
                                                 Ok(_) => {
-                                                    data.zap_status_message = Some("ZAPリクエストを送信しました。ウォレットの確認を待っています...".to_string());
+                                                    // ZAPリクエストを送信しました。ウォレットの確認を待っています...
                                                 }
                                                 Err(e) => {
-                                                    data.zap_status_message = Some(format!("ZAPエラー: {}", e));
+                                                    eprintln!("ZAPエラー: {}", e);
                                                 }
                                             }
                                             data.should_repaint = true;
@@ -229,10 +212,10 @@ pub fn draw_home_view(
                                         close_dialog = true;
 
                                     } else {
-                                        app_data.zap_status_message = Some("無効な金額です".to_string());
+                                        eprintln!("無効な金額です");
                                     }
                                 } else {
-                                    app_data.zap_status_message = Some("ZAPにはNWCの接続が必要です".to_string());
+                                    eprintln!("ZAPにはNWCの接続が必要です");
                                 }
                             }
                         });
@@ -692,7 +675,7 @@ pub fn draw_home_view(
                                     if post.author_pubkey != my_keys.public_key() {
                                         // ZAP button
                                         if !post.author_metadata.lud16.is_empty() {
-                                            if ui.button("⚡").on_hover_text("ZAPを送る").clicked() {
+                                            if ui.button("⚡").clicked() {
                                                 app_data.zap_target_post = Some(post.clone());
                                                 app_data.show_zap_dialog = true;
                                                 app_data.zap_amount_input = "21".to_string(); // Default amount

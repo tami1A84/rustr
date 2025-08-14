@@ -188,5 +188,4 @@ pub struct NostrStatusAppInternal {
     pub show_zap_dialog: bool,
     pub zap_amount_input: String,
     pub zap_target_post: Option<TimelinePost>,
-    pub zap_status_message: Option<String>,
 }

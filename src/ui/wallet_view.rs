@@ -190,7 +190,7 @@ async fn listen_for_nwc_responses(
                                         app_data.nwc_error = None;
                                     },
                                     nostr::nips::nip47::ResponseResult::PayInvoice(_pay_invoice_res) => {
-                                        app_data.zap_status_message = Some("ZAP成功！".to_string());
+                                        println!("ZAP成功！");
                                         // Optionally, you could use the preimage from pay_invoice_res for something.
                                     },
                                     _ => {
@@ -198,12 +198,7 @@ async fn listen_for_nwc_responses(
                                     }
                                 }
                             } else if let Some(error) = decrypted_response.error {
-                                // Check if this error is related to a ZAP attempt
-                                if app_data.zap_status_message.is_some() {
-                                    app_data.zap_status_message = Some(format!("ZAP失敗: {}", error.message));
-                                } else {
-                                    app_data.nwc_error = Some(format!("NWCエラー: {}", error.message));
-                                }
+                                app_data.nwc_error = Some(format!("NWCエラー: {}", error.message));
                             }
                         }
                     }
