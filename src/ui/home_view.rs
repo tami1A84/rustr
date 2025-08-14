@@ -9,7 +9,7 @@ use crate::{
     nostr_client::{update_contact_list, fetch_timeline_events},
     cache_db::DB_FOLLOWED,
     MAX_STATUS_LENGTH,
-    ui::image_cache,
+    ui::{image_cache, zap},
 };
 
 fn render_post_content(
@@ -128,6 +128,22 @@ pub fn draw_home_view(
     let fetch_latest_button_text = "最新の投稿を取得";
     let no_timeline_message_text = "タイムラインに投稿はまだありません。";
 
+    // --- ZAP Status Message ---
+    let mut clear_status_message = false;
+    if let Some(status) = &app_data.zap_status_message {
+        let status_clone = status.clone();
+        ui.horizontal(|ui|{
+            ui.label(status_clone);
+            if ui.button("x").clicked() {
+                clear_status_message = true;
+            }
+        });
+    }
+    if clear_status_message {
+        app_data.zap_status_message = None;
+    }
+
+
     let card_frame = egui::Frame {
         inner_margin: egui::Margin::same(12),
         corner_radius: 8.0.into(),
@@ -135,6 +151,100 @@ pub fn draw_home_view(
         fill: app_data.current_theme.card_background_color(),
         ..Default::default()
     };
+
+    // --- ZAP Dialog ---
+    if app_data.show_zap_dialog {
+        if let Some(post_to_zap) = app_data.zap_target_post.clone() {
+            let mut close_dialog = false;
+            egui::Window::new("ZAPを送る")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add_space(10.0);
+                        let display_name = if !post_to_zap.author_metadata.name.is_empty() {
+                            post_to_zap.author_metadata.name.clone()
+                        } else {
+                            let pubkey = post_to_zap.author_pubkey.to_bech32().unwrap_or_default();
+                            format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len()-4..])
+                        };
+                        ui.label(format!("{} にZAPします", display_name));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.label("金額 (sats):");
+                            ui.add(egui::TextEdit::singleline(&mut app_data.zap_amount_input)
+                                .desired_width(120.0));
+                        });
+                        ui.add_space(10.0);
+                    });
+
+                    ui.separator();
+                    ui.add_space(5.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("キャンセル").clicked() {
+                           close_dialog = true;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("ZAP").clicked() {
+                                if let (Some(nwc), Some(nwc_client), Some(my_keys)) =
+                                    (app_data.nwc.as_ref(), app_data.nwc_client.as_ref(), app_data.my_keys.as_ref())
+                                {
+                                    if let Ok(amount_sats) = app_data.zap_amount_input.parse::<u64>() {
+                                        let nwc_clone = nwc.clone();
+                                        let nwc_client_clone = nwc_client.clone();
+                                        let my_keys_clone = my_keys.clone();
+                                        let app_data_clone = app_data_arc.clone();
+
+                                        runtime_handle.spawn(async move {
+                                            {
+                                                let mut data = app_data_clone.lock().unwrap();
+                                                data.zap_status_message = Some("ZAPを送信中...".to_string());
+                                                data.should_repaint = true;
+                                            } // Lock is dropped here
+
+                                            let result = zap::send_zap_request(
+                                                &nwc_clone,
+                                                &nwc_client_clone,
+                                                &my_keys_clone,
+                                                post_to_zap.author_pubkey,
+                                                &post_to_zap.author_metadata.lud16,
+                                                amount_sats,
+                                                Some(post_to_zap.id),
+                                            ).await;
+
+                                            let mut data = app_data_clone.lock().unwrap();
+                                            match result {
+                                                Ok(_) => {
+                                                    data.zap_status_message = Some("ZAPリクエストを送信しました。ウォレットの確認を待っています...".to_string());
+                                                }
+                                                Err(e) => {
+                                                    data.zap_status_message = Some(format!("ZAPエラー: {}", e));
+                                                }
+                                            }
+                                            data.should_repaint = true;
+                                        });
+
+                                        close_dialog = true;
+
+                                    } else {
+                                        app_data.zap_status_message = Some("無効な金額です".to_string());
+                                    }
+                                } else {
+                                    app_data.zap_status_message = Some("ZAPにはNWCの接続が必要です".to_string());
+                                }
+                            }
+                        });
+                    });
+                });
+            if close_dialog {
+                app_data.show_zap_dialog = false;
+                app_data.zap_target_post = None;
+            }
+        }
+    }
+
 
     if app_data.show_post_dialog {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "dim_layer".into()));
@@ -222,8 +332,7 @@ pub fn draw_home_view(
                                         }
                                         for shortcode in used_emojis {
                                             if let Some(url) = my_emojis.get(&shortcode) {
-                                                let tag_vec: Vec<&str> = vec!["emoji", &shortcode, url];
-                                                if let Ok(tag) = Tag::parse(tag_vec) {
+                                                if let Ok(tag) = Tag::parse(["emoji", &shortcode, url]) {
                                                     tags.push(tag);
                                                 }
                                             }
@@ -242,8 +351,7 @@ pub fn draw_home_view(
                                         };
 
                                         if !r_url.is_empty() {
-                                            let r_tag_vec: Vec<String> = vec!["r".to_string(), r_url];
-                                            if let Ok(tag) = Tag::parse(r_tag_vec) {
+                                            if let Ok(tag) = Tag::parse(["r", &r_url]) {
                                                 tags.push(tag);
                                             }
                                         }
@@ -582,6 +690,15 @@ pub fn draw_home_view(
 
                                 if let Some(my_keys) = &app_data.my_keys {
                                     if post.author_pubkey != my_keys.public_key() {
+                                        // ZAP button
+                                        if !post.author_metadata.lud16.is_empty() {
+                                            if ui.button("⚡").on_hover_text("ZAPを送る").clicked() {
+                                                app_data.zap_target_post = Some(post.clone());
+                                                app_data.show_zap_dialog = true;
+                                                app_data.zap_amount_input = "21".to_string(); // Default amount
+                                            }
+                                        }
+
                                         ui.menu_button("...", |ui| {
                                             let is_followed = app_data.followed_pubkeys.contains(&post.author_pubkey);
                                             let button_text = if is_followed { "アンフォロー" } else { "フォロー" };
