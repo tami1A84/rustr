@@ -205,6 +205,10 @@ impl NostrStatusApp {
             nwc_client: None,
             wallet_balance: None,
             nwc_error: None,
+            show_zap_dialog: false,
+            zap_amount_input: String::new(),
+            zap_target_post: None,
+            zap_status_message: None,
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 

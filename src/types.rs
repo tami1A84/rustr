@@ -184,4 +184,9 @@ pub struct NostrStatusAppInternal {
     pub nwc_client: Option<Client>,
     pub wallet_balance: Option<u64>,
     pub nwc_error: Option<String>,
+    // ZAP
+    pub show_zap_dialog: bool,
+    pub zap_amount_input: String,
+    pub zap_target_post: Option<TimelinePost>,
+    pub zap_status_message: Option<String>,
 }
