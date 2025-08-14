@@ -163,6 +163,7 @@ impl NostrStatusApp {
             LmdbCache::new(Path::new(DB_PATH)).expect("Failed to initialize LMDB cache");
 
         let app_data_internal = NostrStatusAppInternal {
+            nwc_uri_input: String::new(),
             cache_db: lmdb_cache,
             is_logged_in: false,
             status_message_input: String::new(),
