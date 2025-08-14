@@ -93,6 +93,7 @@ pub struct TimelinePost {
 pub enum AppTab {
     Home,
     Relays,
+    Wallet,
     Profile,
 }
 
@@ -140,6 +141,7 @@ impl AppTheme {
 }
 
 pub struct NostrStatusAppInternal {
+    pub nwc_uri_input: String,
     pub cache_db: LmdbCache,
     pub is_logged_in: bool,
     pub status_message_input: String,

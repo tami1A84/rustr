@@ -2,6 +2,7 @@ pub mod login_view;
 pub mod home_view;
 pub mod relays_view;
 pub mod profile_view;
+pub mod wallet_view;
 pub mod image_cache;
 
 use eframe::egui::{self, Margin};
@@ -18,6 +19,7 @@ impl eframe::App for NostrStatusApp {
 
         let home_tab_text = "ホーム";
         let relays_tab_text = "リレー";
+        let wallet_tab_text = "ウォレット";
         let profile_tab_text = "プロフィール";
 
         // app_data_arc をクローンして非同期タスクに渡す
@@ -66,6 +68,11 @@ impl eframe::App for NostrStatusApp {
                         );
                         ui.selectable_value(
                             &mut app_data.current_tab,
+                            AppTab::Wallet,
+                            wallet_tab_text,
+                        );
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
                             AppTab::Profile,
                             profile_tab_text,
                         );
@@ -103,6 +110,9 @@ impl eframe::App for NostrStatusApp {
                         },
                         AppTab::Relays => {
                            relays_view::draw_relays_view(ui, &mut app_data, app_data_arc_clone, runtime_handle);
+                        },
+                        AppTab::Wallet => {
+                            wallet_view::draw_wallet_view(ui, &mut app_data, app_data_arc_clone, runtime_handle);
                         },
                         AppTab::Profile => {
                             profile_view::draw_profile_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
