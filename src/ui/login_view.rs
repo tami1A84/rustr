@@ -4,10 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 use std::time::Duration;
-use rand::RngCore;
-
-use bip39::{Mnemonic, Language};
-use nostr::{nips::{nip06::FromMnemonic, nip47::NostrWalletConnectURI}, Filter, Keys, Kind, PublicKey, ToBech32};
+use nostr::{nips::nip47::NostrWalletConnectURI, Filter, Keys, Kind, PublicKey};
 use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::str::FromStr;
 
@@ -317,33 +314,7 @@ pub fn draw_login_view(
                 ui.add(egui::TextEdit::singleline(&mut app_data.secret_key_input)
                     .password(true)
                     .hint_text(secret_key_hint_text));
-                if ui.button("ニーモニックから新しいキーを生成").clicked() {
-                    // Generate a new mnemonic
-                    let mut entropy = [0u8; 16]; // 128 bits of entropy for a 12-word mnemonic
-                    rand::thread_rng().fill_bytes(&mut entropy);
-                    if let Ok(mnemonic) = Mnemonic::from_entropy_in(Language::English, &entropy) {
-                        let phrase = mnemonic.to_string();
-                        app_data.generated_mnemonic = Some(phrase.clone());
-
-                        // Derive keys from mnemonic
-                        if let Ok(keys) = Keys::from_mnemonic(&phrase, None) {
-                            // Based on compiler errors, `secret_key()` returns a reference directly.
-                            let sk_ref = keys.secret_key();
-                            let nsec = sk_ref.to_bech32().unwrap(); // Infallible error, so unwrap is safe.
-                            app_data.secret_key_input = nsec;
-                        }
-                    }
-                }
             });
-
-            if let Some(mnemonic) = &app_data.generated_mnemonic {
-                ui.add_space(10.0);
-                ui.label("生成されたニーモニックフレーズ：");
-                ui.label("この12個の単語を安全な場所に保管してください。これはあなたの鍵を復元する唯一の方法です。");
-
-                ui.add(egui::Label::new(egui::RichText::new(mnemonic).monospace()).wrap());
-                ui.add_space(10.0);
-            }
 
             ui.horizontal(|ui| {
                 ui.label(passphrase_label_text);
