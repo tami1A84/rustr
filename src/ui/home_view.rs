@@ -195,6 +195,7 @@ pub fn draw_home_view(
                                                 &post_to_zap.author_metadata.lud16,
                                                 amount_sats,
                                                 Some(post_to_zap.id),
+                                                Some(post_to_zap.kind),
                                             ).await;
 
                                             let mut data = app_data_clone.lock().unwrap();

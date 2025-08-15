@@ -390,6 +390,7 @@ pub async fn fetch_timeline_events(
 
                 timeline_posts.push(TimelinePost {
                     id: event.id,
+                    kind: event.kind,
                     author_pubkey: event.pubkey,
                     author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
                     content: event.content.clone(),
