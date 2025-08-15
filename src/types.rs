@@ -79,6 +79,18 @@ pub enum ImageState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZapReceipt {
+    pub id: EventId,
+    pub zapper_pubkey: Option<PublicKey>,
+    pub recipient_pubkey: PublicKey,
+    pub recipient_metadata: ProfileMetadata,
+    pub amount_msats: u64,
+    pub created_at: Timestamp,
+    pub note: String,
+    pub zapped_event_id: Option<EventId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelinePost {
     pub id: EventId,
     pub kind: Kind,
@@ -183,8 +195,9 @@ pub struct NostrStatusAppInternal {
     pub nwc_passphrase_input: String,
     pub nwc: Option<NostrWalletConnectURI>,
     pub nwc_client: Option<Client>,
-    pub wallet_balance: Option<u64>,
     pub nwc_error: Option<String>,
+    pub zap_history: Vec<ZapReceipt>,
+    pub zap_history_fetch_status: String,
     // ZAP
     pub show_zap_dialog: bool,
     pub zap_amount_input: String,

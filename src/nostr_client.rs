@@ -322,6 +322,27 @@ pub async fn update_contact_list(
     Ok(followed_pubkeys)
 }
 
+pub async fn get_profile_metadata(
+    pubkey: PublicKey,
+    client: &Client,
+) -> Result<ProfileMetadata, Box<dyn std::error::Error + Send + Sync>> {
+    let filter = Filter::new().authors(vec![pubkey]).kind(Kind::Metadata).limit(1);
+
+    // Get relays from client
+    let relays = client.relays().await;
+    let relay_urls: Vec<String> = relays.keys().map(|url| url.to_string()).collect();
+
+    let events = client.fetch_events_from(relay_urls, filter, Duration::from_secs(5)).await?;
+
+    if let Some(event) = events.first() {
+        let metadata: ProfileMetadata = serde_json::from_str(&event.content)?;
+        Ok(metadata)
+    } else {
+        // Return a default profile if none is found
+        Ok(ProfileMetadata::default())
+    }
+}
+
 pub async fn fetch_timeline_events(
     keys: &Keys,
     discover_relays: &str,
