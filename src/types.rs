@@ -198,6 +198,7 @@ pub struct NostrStatusAppInternal {
     pub nwc_error: Option<String>,
     pub zap_history: Vec<ZapReceipt>,
     pub zap_history_fetch_status: String,
+    pub is_fetching_zap_history: bool,
     // ZAP
     pub show_zap_dialog: bool,
     pub zap_amount_input: String,

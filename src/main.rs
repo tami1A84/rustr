@@ -206,6 +206,7 @@ impl NostrStatusApp {
             nwc_error: None,
             zap_history: Vec::new(),
             zap_history_fetch_status: String::new(),
+            is_fetching_zap_history: false,
             show_zap_dialog: false,
             zap_amount_input: String::new(),
             zap_target_post: None,
