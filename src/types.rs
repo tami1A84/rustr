@@ -1,5 +1,5 @@
 use eframe::egui;
-use nostr::{nips::nip47::NostrWalletConnectURI, PublicKey, Timestamp, Keys, EventId};
+use nostr::{nips::nip47::NostrWalletConnectURI, PublicKey, Timestamp, Keys, EventId, Kind};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
@@ -81,6 +81,7 @@ pub enum ImageState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelinePost {
     pub id: EventId,
+    pub kind: Kind,
     pub author_pubkey: PublicKey,
     pub author_metadata: ProfileMetadata,
     pub content: String,

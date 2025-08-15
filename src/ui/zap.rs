@@ -51,6 +51,7 @@ pub async fn send_zap_request(
     lud16: &str,
     amount_sats: u64,
     note_id: Option<nostr::EventId>,
+    note_kind: Option<Kind>,
 ) -> Result<()> {
     let amount_msats = amount_sats * 1000;
     let lnurl = lud16_to_lnurl(lud16)?;
@@ -84,6 +85,9 @@ pub async fn send_zap_request(
     ];
     if let Some(event_id) = note_id {
         tags.push(Tag::event(event_id));
+    }
+    if let Some(kind) = note_kind {
+        tags.push(Tag::parse(["k", &kind.as_u16().to_string()])?);
     }
     let zap_request = EventBuilder::new(Kind::ZapRequest, "")
         .tags(tags)
