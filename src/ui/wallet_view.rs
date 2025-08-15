@@ -49,18 +49,25 @@ fn draw_wallet_details(
     ui.label("ウォレット接続済み");
     ui.add_space(10.0);
 
-    if ui.button("履歴を更新").clicked() {
-        let app_data_clone = app_data_arc.clone();
-        runtime_handle.spawn(async move {
-            if let Err(e) = get_zap_history(app_data_clone.clone()).await {
-                let mut app_data = app_data_clone.lock().unwrap();
-                app_data.nwc_error = Some(format!("Zap履歴の取得エラー: {}", e));
-            }
-        });
-    }
+    ui.horizontal(|ui| {
+        let refresh_button = ui.add_enabled(!app_data.is_fetching_zap_history, egui::Button::new("履歴を更新"));
+        if refresh_button.clicked() {
+            let app_data_clone = app_data_arc.clone();
+            runtime_handle.spawn(async move {
+                if let Err(e) = get_zap_history(app_data_clone.clone()).await {
+                    let mut app_data = app_data_clone.lock().unwrap();
+                    app_data.nwc_error = Some(format!("Zap履歴の取得エラー: {}", e));
+                }
+            });
+        }
 
-    ui.add_space(10.0);
-    ui.label(&app_data.zap_history_fetch_status);
+        if app_data.is_fetching_zap_history {
+            ui.add_space(10.0);
+            ui.spinner();
+            ui.label(&app_data.zap_history_fetch_status);
+        }
+    });
+
     ui.add_space(10.0);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -246,7 +253,8 @@ async fn get_zap_history(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (client, my_pubkey) = {
         let mut app_data = app_data_arc.lock().unwrap();
-        app_data.zap_history_fetch_status = "履歴を取得中...".to_string();
+        app_data.is_fetching_zap_history = true;
+        app_data.zap_history_fetch_status = "取得中...".to_string();
         let client = app_data
             .nostr_client
             .as_ref()
@@ -267,25 +275,43 @@ async fn get_zap_history(
 
     let relays = client.relays().await;
     let relay_urls: Vec<String> = relays.keys().map(|url| url.to_string()).collect();
-    let events = client.fetch_events_from(relay_urls, filter, std::time::Duration::from_secs(10)).await?;
+    let events = client.fetch_events_from(relay_urls, filter, std::time::Duration::from_secs(10)).await;
 
-    let mut zap_receipts = Vec::new();
+    // The rest of the function will run regardless of whether events were found or not,
+    // so we can set is_fetching to false after this point.
+    // We will handle the result of event fetching below.
+    {
+        let mut app_data = app_data_arc.lock().unwrap();
+        app_data.is_fetching_zap_history = false;
+        app_data.zap_history_fetch_status = String::new(); // Clear status text
+    }
 
-    for event in events {
-        if let Ok(receipt) = parse_zap_receipt(event, &client).await {
-            zap_receipts.push(receipt);
+
+    match events {
+        Ok(events) => {
+            let mut zap_receipts = Vec::new();
+
+            for event in events {
+                if let Ok(receipt) = parse_zap_receipt(event, &client).await {
+                    zap_receipts.push(receipt);
+                }
+            }
+
+            // Sort by creation date, newest first
+            zap_receipts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+            {
+                let mut app_data = app_data_arc.lock().unwrap();
+                app_data.zap_history = zap_receipts;
+                app_data.nwc_error = None;
+            }
+        },
+        Err(e) => {
+             let mut app_data = app_data_arc.lock().unwrap();
+             app_data.nwc_error = Some(format!("Zap履歴の取得エラー: {}", e));
         }
     }
 
-    // Sort by creation date, newest first
-    zap_receipts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-    {
-        let mut app_data = app_data_arc.lock().unwrap();
-        app_data.zap_history = zap_receipts;
-        app_data.zap_history_fetch_status = "履歴の取得が完了しました。".to_string();
-        app_data.nwc_error = None;
-    }
 
     Ok(())
 }
@@ -309,6 +335,25 @@ async fn parse_zap_receipt(
 
     let zap_request_event = Event::from_json(description_tag)?;
     note = zap_request_event.content.clone();
+
+    // Check for the specific k tag ("30315")
+    let required_k_tag_found =
+        zap_request_event
+            .tags
+            .iter()
+            .any(|t| {
+                if t.kind() == TagKind::SingleLetter(SingleLetterTag::from_char('k').unwrap())
+                {
+                    if let Some(val) = t.as_slice().get(1) {
+                        return val == "30315";
+                    }
+                }
+                false
+            });
+
+    if !required_k_tag_found {
+        return Err("Required k tag '30315' not found in zap request".into());
+    }
 
     for tag in zap_request_event.tags {
         if let Some(nostr::TagStandard::PublicKey { public_key, .. }) = tag.as_standardized() {
