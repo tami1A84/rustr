@@ -1,4 +1,4 @@
-# なう
+# なう.
 
 [日本語](#n) | [English](#n-1)
 
@@ -52,7 +52,7 @@
 1.  **リポジトリをクローンし、ディレクトリに移動します:**
     ```bash
     git clone https://github.com/tami1A84/now..git
-    cd N
+    cd now.
     ```
 2.  **アプリケーションを実行します:**
     ```bash
@@ -69,7 +69,7 @@
 
 ---
 
-# now
+# now.
 
 [日本語](#n) | [English](#n-1)
 
@@ -122,8 +122,8 @@ This app removes social features like replies and likes to provide a pure status
 
 1.  **Clone the repository and navigate to the directory:**
     ```bash
-    git clone https://github.com/tami1A84/N.git
-    cd N
+    git clone https://github.com/tami1A84/now..git
+    cd now.
     ```
 2.  **Run the application:**
     ```bash
