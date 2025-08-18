@@ -51,7 +51,7 @@
 
 1.  **リポジトリをクローンし、ディレクトリに移動します:**
     ```bash
-    git clone https://github.com/tami1A84/N.git
+    git clone https://github.com/tami1A84/now..git
     cd N
     ```
 2.  **アプリケーションを実行します:**
