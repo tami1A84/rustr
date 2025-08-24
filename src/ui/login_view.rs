@@ -9,16 +9,15 @@ use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::str::FromStr;
 
 use crate::{
-    types::{Config, EditableRelay, NostrStatusAppInternal, ProfileMetadata, TimelinePost, AppTab},
-    cache_db::{LmdbCache, DB_FOLLOWED, DB_RELAYS, DB_PROFILES, DB_TIMELINE},
+    types::{Config, NostrStatusAppInternal, ProfileMetadata, TimelinePost, AppTab},
+    cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE},
     CONFIG_FILE,
-    nostr_client::{connect_to_relays_with_nip65, fetch_nip01_profile, fetch_timeline_events}
+    nostr_client::{connect_to_aggregator_relay, fetch_nip01_profile, fetch_timeline_events}
 };
 
 // --- Step 1: キャッシュからデータを読み込む ---
 struct CachedData {
     followed_pubkeys: HashSet<PublicKey>,
-    nip65_relays: Vec<(String, Option<String>)>,
     profile_metadata: ProfileMetadata,
     timeline_posts: Vec<TimelinePost>,
 }
@@ -30,21 +29,18 @@ fn load_data_from_cache(
     println!("Loading data from cache for pubkey: {pubkey_hex}");
 
     let followed_cache = cache_db.read_cache::<HashSet<PublicKey>>(DB_FOLLOWED, pubkey_hex)?;
-    let nip65_cache =
-        cache_db.read_cache::<Vec<(String, Option<String>)>>(DB_RELAYS, pubkey_hex)?;
     let profile_cache = cache_db.read_cache::<ProfileMetadata>(DB_PROFILES, pubkey_hex)?;
     let timeline_cache = cache_db
         .read_cache::<Vec<TimelinePost>>(DB_TIMELINE, pubkey_hex)
         .ok();
 
-    if followed_cache.is_expired() || nip65_cache.is_expired() || profile_cache.is_expired() {
+    if followed_cache.is_expired() || profile_cache.is_expired() {
         return Err("Cache expired".into());
     }
 
     println!("Successfully loaded data from cache.");
     Ok(CachedData {
         followed_pubkeys: followed_cache.data,
-        nip65_relays: nip65_cache.data,
         profile_metadata: profile_cache.data,
         timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data),
     })
@@ -55,7 +51,6 @@ struct FreshData {
     followed_pubkeys: HashSet<PublicKey>,
     timeline_posts: Vec<TimelinePost>,
     log_message: String,
-    fetched_nip65_relays: Vec<(String, Option<String>)>,
     profile_metadata: ProfileMetadata,
     profile_json_string: String,
 }
@@ -63,17 +58,13 @@ struct FreshData {
 async fn fetch_fresh_data_from_network(
     client: &Client,
     keys: &Keys,
-    discover_relays: &str,
-    default_relays: &str,
     cache_db: &LmdbCache,
 ) -> Result<FreshData, Box<dyn std::error::Error + Send + Sync>> {
     let pubkey_hex = keys.public_key().to_string();
 
     println!("Fetching fresh data from network...");
 
-    let (log_message, fetched_nip65_relays) =
-        connect_to_relays_with_nip65(client, keys, discover_relays, default_relays).await?;
-    cache_db.write_cache(DB_RELAYS, &pubkey_hex, &fetched_nip65_relays)?;
+    let log_message = connect_to_aggregator_relay(client).await?;
 
     println!("Fetching NIP-02 contact list...");
     let nip02_filter = Filter::new()
@@ -108,7 +99,7 @@ async fn fetch_fresh_data_from_network(
         cache_db.write_cache(DB_FOLLOWED, &pubkey_hex, &followed_pubkeys)?;
     }
 
-    let timeline_posts = fetch_timeline_events(keys, discover_relays, &followed_pubkeys).await?;
+    let timeline_posts = fetch_timeline_events(client).await?;
     cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
 
     let (profile_metadata, profile_json_string) =
@@ -119,7 +110,6 @@ async fn fetch_fresh_data_from_network(
         followed_pubkeys,
         timeline_posts,
         log_message,
-        fetched_nip65_relays,
         profile_metadata,
         profile_json_string,
     })
@@ -204,10 +194,6 @@ pub fn draw_login_view(
 
                         let client = Client::new(keys.clone());
                         let pubkey_hex = keys.public_key().to_string();
-                        let (discover_relays, default_relays) = {
-                            let app_data = app_data_for_login_logic.lock().unwrap();
-                            (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
-                        };
                         if let Ok(cached_data) = load_data_from_cache(&cache_db_clone, &pubkey_hex) {
                             let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.my_keys = Some(keys.clone());
@@ -215,14 +201,6 @@ pub fn draw_login_view(
                             app_data.followed_pubkeys = cached_data.followed_pubkeys;
                             app_data.timeline_posts = cached_data.timeline_posts;
                             app_data.editable_profile = cached_data.profile_metadata;
-                            app_data.nip65_relays = cached_data.nip65_relays.into_iter().map(|(url, policy)| {
-                                let (read, write) = match policy.as_deref() {
-                                    Some("read") => (true, false),
-                                    Some("write") => (false, true),
-                                    _ => (true, true),
-                                };
-                                EditableRelay { url, read, write }
-                            }).collect();
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
                         } else {
@@ -232,7 +210,7 @@ pub fn draw_login_view(
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
                         }
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
+                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone).await;
                         if let Ok(fresh_data) = fresh_data_result {
                             let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.followed_pubkeys = fresh_data.followed_pubkeys;
@@ -240,14 +218,6 @@ pub fn draw_login_view(
                             if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
                                 app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
                             }
-                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.clone().into_iter().map(|(url, policy)| {
-                                let (read, write) = match policy.as_deref() {
-                                    Some("read") => (true, false),
-                                    Some("write") => (false, true),
-                                    _ => (true, true),
-                                };
-                                EditableRelay { url, read, write }
-                            }).collect();
                             let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
                                 .iter()
                                 .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
@@ -259,23 +229,11 @@ pub fn draw_login_view(
 
                             // --- Fetch NIP-30/51 Emojis with fallback ---
                             let pubkey = keys.public_key();
-                            let nip65_relays = fresh_data.fetched_nip65_relays.clone();
                             let app_data_clone_for_emojis = app_data_for_login_logic.clone();
                             runtime_handle.clone().spawn(async move {
                                 println!("Spawning emoji fetch task for kind:30030...");
-                                let nip65_urls: Vec<String> = nip65_relays.iter().map(|(url, _)| url.clone()).collect();
 
-                                let mut custom_emojis = crate::emoji_loader::fetch_emoji_sets(&nip65_urls, pubkey).await;
-
-                                if custom_emojis.is_empty() {
-                                    println!("No emojis found in NIP-65 relays, trying default relays...");
-                                    let default_relays_str = {
-                                        let app_data = app_data_clone_for_emojis.lock().unwrap();
-                                        app_data.default_relays_editor.clone()
-                                    };
-                                    let default_relay_urls: Vec<String> = default_relays_str.lines().map(String::from).collect();
-                                    custom_emojis = crate::emoji_loader::fetch_emoji_sets(&default_relay_urls, pubkey).await;
-                                }
+                                let custom_emojis = crate::emoji_loader::fetch_emoji_sets(&vec!["wss://yabu.me".to_string()], pubkey).await;
 
                                 if !custom_emojis.is_empty() {
                                     println!("Fetched {} custom emojis from kind:30030.", custom_emojis.len());
@@ -283,7 +241,7 @@ pub fn draw_login_view(
                                     app_data.my_emojis.extend(custom_emojis);
                                     app_data.should_repaint = true;
                                 } else {
-                                    println!("No custom emojis found from NIP-65 or default relays.");
+                                    println!("No custom emojis found from the aggregator relay.");
                                 }
                             });
                             // --- End Fetch Emojis ---
@@ -361,11 +319,7 @@ pub fn draw_login_view(
                             Ok(user_provided_keys)
                         })()?;
                         let client = Client::new(keys.clone());
-                        let (discover_relays, default_relays) = {
-                            let app_data = cloned_app_data_arc.lock().unwrap();
-                            (app_data.discover_relays_editor.clone(), app_data.default_relays_editor.clone())
-                        };
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &discover_relays, &default_relays, &cache_db_clone).await;
+                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone).await;
                         if let Ok(fresh_data) = fresh_data_result {
                             let mut app_data = cloned_app_data_arc.lock().unwrap();
                             app_data.my_keys = Some(keys.clone());
@@ -377,14 +331,6 @@ pub fn draw_login_view(
                             if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
                                 app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
                             }
-                            app_data.nip65_relays = fresh_data.fetched_nip65_relays.clone().into_iter().map(|(url, policy)| {
-                                let (read, write) = match policy.as_deref() {
-                                    Some("read") => (true, false),
-                                    Some("write") => (false, true),
-                                    _ => (true, true),
-                                };
-                                EditableRelay { url, read, write }
-                            }).collect();
                             let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
                                 .iter()
                                 .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
@@ -396,23 +342,10 @@ pub fn draw_login_view(
 
                             // --- Fetch NIP-30/51 Emojis with fallback ---
                             let pubkey = keys.public_key();
-                            let nip65_relays = fresh_data.fetched_nip65_relays.clone();
                             let app_data_clone_for_emojis = cloned_app_data_arc.clone();
                             runtime_handle.clone().spawn(async move {
                                 println!("Spawning emoji fetch task for kind:30030...");
-                                let nip65_urls: Vec<String> = nip65_relays.iter().map(|(url, _)| url.clone()).collect();
-
-                                let mut custom_emojis = crate::emoji_loader::fetch_emoji_sets(&nip65_urls, pubkey).await;
-
-                                if custom_emojis.is_empty() {
-                                    println!("No emojis found in NIP-65 relays, trying default relays...");
-                                    let default_relays_str = {
-                                        let app_data = app_data_clone_for_emojis.lock().unwrap();
-                                        app_data.default_relays_editor.clone()
-                                    };
-                                    let default_relay_urls: Vec<String> = default_relays_str.lines().map(String::from).collect();
-                                    custom_emojis = crate::emoji_loader::fetch_emoji_sets(&default_relay_urls, pubkey).await;
-                                }
+                                let custom_emojis = crate::emoji_loader::fetch_emoji_sets(&vec!["wss://yabu.me".to_string()], pubkey).await;
 
                                 if !custom_emojis.is_empty() {
                                     println!("Fetched {} custom emojis from kind:30030.", custom_emojis.len());
@@ -420,7 +353,7 @@ pub fn draw_login_view(
                                     app_data.my_emojis.extend(custom_emojis);
                                     app_data.should_repaint = true;
                                 } else {
-                                    println!("No custom emojis found from NIP-65 or default relays.");
+                                    println!("No custom emojis found from the aggregator relay.");
                                 }
                             });
                             // --- End Fetch Emojis ---

@@ -57,13 +57,6 @@ pub struct ProfileMetadata {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct EditableRelay {
-    pub url: String,
-    pub read: bool,
-    pub write: bool,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub enum ImageKind {
     Avatar,
@@ -107,7 +100,6 @@ pub struct TimelinePost {
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum AppTab {
     Home,
-    Relays,
     Wallet,
     Profile,
 }
@@ -116,13 +108,6 @@ pub enum AppTab {
 pub enum AppTheme {
     Light,
     Dark,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum StatusType {
-    General,
-    Music,
-    Podcast,
 }
 
 impl AppTheme {
@@ -166,13 +151,6 @@ pub struct NostrStatusAppInternal {
     pub secret_key_input: String,
     pub passphrase_input: String,
     pub confirm_passphrase_input: String,
-    pub current_status_type: StatusType,
-    pub show_music_dialog: bool,
-    pub music_track_input: String,
-    pub music_url_input: String,
-    pub show_podcast_dialog: bool,
-    pub podcast_episode_input: String,
-    pub podcast_url_input: String,
     pub nostr_client: Option<Client>,
     pub my_keys: Option<Keys>,
     pub followed_pubkeys: HashSet<PublicKey>,
@@ -185,9 +163,6 @@ pub struct NostrStatusAppInternal {
     pub nip01_profile_display: String,
     pub editable_profile: ProfileMetadata,
     pub profile_fetch_status: String,
-    pub nip65_relays: Vec<EditableRelay>,
-    pub discover_relays_editor: String,
-    pub default_relays_editor: String,
     pub current_theme: AppTheme,
     pub image_cache: HashMap<String, ImageState>,
 
