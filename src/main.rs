@@ -16,7 +16,7 @@ use regex::Regex;
 
 mod theme;
 
-use crate::cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_RELAYS};
+use crate::cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES};
 use crate::types::*;
 
 
@@ -64,11 +64,6 @@ async fn migrate_data_from_files(
                 let cache: Cache<HashSet<PublicKey>> = serde_json::from_str(&content)?;
                 cache_db.write_cache(DB_FOLLOWED, &pubkey_hex, &cache.data)?;
                 println!("  - Migrated followed list.");
-            } else if file_name.ends_with("_nip65.json") {
-                let content = fs::read_to_string(&path)?;
-                let cache: Cache<Vec<(String, Option<String>)>> = serde_json::from_str(&content)?;
-                cache_db.write_cache(DB_RELAYS, &pubkey_hex, &cache.data)?;
-                println!("  - Migrated NIP-65 relays.");
             } else if file_name.ends_with("_profile.json") {
                 let content = fs::read_to_string(&path)?;
                 let cache: Cache<ProfileMetadata> = serde_json::from_str(&content)?;
@@ -174,13 +169,6 @@ impl NostrStatusApp {
             secret_key_input: String::new(),
             passphrase_input: String::new(),
             confirm_passphrase_input: String::new(),
-    current_status_type: StatusType::General,
-    show_music_dialog: false,
-    music_track_input: String::new(),
-    music_url_input: String::new(),
-    show_podcast_dialog: false,
-    podcast_episode_input: String::new(),
-    podcast_url_input: String::new(),
             nostr_client: None,
             my_keys: None,
             followed_pubkeys: HashSet::new(),
@@ -190,14 +178,9 @@ impl NostrStatusApp {
             is_loading: false,
             current_tab: AppTab::Home,
             connected_relays_display: String::new(),
-            nip01_profile_display: String::new(), // ここを初期化
-            editable_profile: ProfileMetadata::default(), // 編集可能なプロファイルデータ
-            profile_fetch_status: "Fetching profile...".to_string(), // プロファイル取得状態
-            // リレーリスト編集用のフィールドを初期化
-            nip65_relays: Vec::new(),
-            discover_relays_editor: "wss://purplepag.es\nwss://directory.yabu.me".to_string(),
-            default_relays_editor:
-                "wss://relay.damus.io\nwss://relay.nostr.wirednet.jp\nwss://yabu.me".to_string(),
+            nip01_profile_display: String::new(),
+            editable_profile: ProfileMetadata::default(),
+            profile_fetch_status: "Fetching profile...".to_string(),
             current_theme: AppTheme::Light,
             image_cache: HashMap::new(),
             nwc_passphrase_input: String::new(),

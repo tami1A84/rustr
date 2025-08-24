@@ -1,13 +1,12 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use nostr::{EventBuilder, Kind, PublicKey, Tag, nips::nip19::ToBech32, EventId, Timestamp};
+use nostr::{EventBuilder, Kind, Tag, nips::nip19::ToBech32, EventId};
 use regex::Regex;
 
 use crate::{
     types::*,
-    nostr_client::{update_contact_list, fetch_timeline_events},
-    cache_db::DB_FOLLOWED,
+    nostr_client::fetch_timeline_events,
     MAX_STATUS_LENGTH,
     ui::{image_cache, zap},
 };
@@ -248,24 +247,10 @@ pub fn draw_home_view(
                                 app_data.show_emoji_picker = !app_data.show_emoji_picker;
                             }
 
-                            // Music status button
-                            if ui.button("🎵").clicked() {
-                                app_data.show_music_dialog = true;
-                            }
-
-                            // Podcast status button
-                            if ui.button("🎤").clicked() {
-                                app_data.show_podcast_dialog = true;
-                            }
-
                             let count = app_data.status_message_input.chars().count();
-                            let counter_string = if app_data.current_status_type == StatusType::General {
-                                format!("{}/{}", count, MAX_STATUS_LENGTH)
-                            } else {
-                                format!("{}", count)
-                            };
+                            let counter_string = format!("{}/{}", count, MAX_STATUS_LENGTH);
                             let mut counter_text = egui::RichText::new(counter_string);
-                            if app_data.current_status_type == StatusType::General && count > MAX_STATUS_LENGTH {
+                            if count > MAX_STATUS_LENGTH {
                                 counter_text = counter_text.color(egui::Color32::RED);
                             }
                             ui.label(counter_text);
@@ -274,12 +259,7 @@ pub fn draw_home_view(
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.button(cancel_button_text).clicked() {
                                     app_data.show_post_dialog = false;
-                                    app_data.current_status_type = StatusType::General;
                                     app_data.status_message_input.clear();
-                                    app_data.music_track_input.clear();
-                                    app_data.music_url_input.clear();
-                                    app_data.podcast_episode_input.clear();
-                                    app_data.podcast_url_input.clear();
                                 }
                                 if ui.button(publish_button_text).clicked() && !app_data.is_loading {
                                     let status_message = app_data.status_message_input.clone();
@@ -290,16 +270,12 @@ pub fn draw_home_view(
                                     app_data.should_repaint = true;
                                     println!("Publishing NIP-38 status...");
 
-                                    if app_data.current_status_type == StatusType::General && status_message.chars().count() > MAX_STATUS_LENGTH {
+                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
                                         eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
                                         app_data.is_loading = false;
                                         app_data.should_repaint = true;
                                         return;
                                     }
-
-                                    let current_status_type = app_data.current_status_type;
-                                    let music_url = app_data.music_url_input.clone();
-                                    let podcast_url = app_data.podcast_url_input.clone();
 
                                     let my_emojis = app_data.my_emojis.clone();
                                     let cloned_app_data_arc = app_data_arc.clone();
@@ -322,32 +298,7 @@ pub fn draw_home_view(
                                             }
                                         }
 
-                                        let d_tag_value = match current_status_type {
-                                            StatusType::General => "general",
-                                            StatusType::Music | StatusType::Podcast => "music",
-                                        };
-                                        tags.push(Tag::identifier(d_tag_value.to_string()));
-
-                                        let r_url = match current_status_type {
-                                            StatusType::Music => music_url,
-                                            StatusType::Podcast => podcast_url,
-                                            _ => String::new(),
-                                        };
-
-                                        if !r_url.is_empty() {
-                                            if let Ok(tag) = Tag::parse(["r", &r_url]) {
-                                                tags.push(tag);
-                                            }
-                                        }
-
-                                        if current_status_type != StatusType::General {
-                                            let expiration_time = chrono::Utc::now().timestamp() + 30 * 60; // 30 minutes
-                                            tags.push(Tag::expiration(Timestamp::from(
-                                                expiration_time as u64,
-                                            )));
-                                        }
-
-                                        let event_result = EventBuilder::new(Kind::from(30315), status_message.clone())
+                                        let event_result = EventBuilder::new(Kind::TextNote, status_message.clone())
                                             .tags(tags)
                                             .sign(&keys_clone_nip38_send)
                                             .await;
@@ -359,11 +310,6 @@ pub fn draw_home_view(
                                                     let mut data = cloned_app_data_arc.lock().unwrap();
                                                     data.status_message_input.clear();
                                                     data.show_post_dialog = false;
-                                                    data.current_status_type = StatusType::General;
-                                                    data.music_track_input.clear();
-                                                    data.music_url_input.clear();
-                                                    data.podcast_episode_input.clear();
-                                                    data.podcast_url_input.clear();
                                                 }
                                                 Err(e) => {
                                                     eprintln!("Failed to publish status: {e}");
@@ -453,116 +399,20 @@ pub fn draw_home_view(
         }
     }
 
-    // --- Music Status Dialog ---
-    if app_data.show_music_dialog {
-        egui::Window::new("音楽ステータスを設定")
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.add_space(10.0);
-                    ui.label("曲名");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app_data.music_track_input)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("Sayonara - Gen Hoshino"),
-                    );
-                    ui.add_space(10.0);
-                    ui.label("URL（任意）");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app_data.music_url_input)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("spotify:track:39tH2BvK2r9Vv1A25Gf3fB"),
-                    );
-                    ui.add_space(10.0);
-                });
-
-                ui.separator();
-                ui.add_space(5.0);
-
-                ui.horizontal(|ui| {
-                    if ui.button("キャンセル").clicked() {
-                        app_data.show_music_dialog = false;
-                        app_data.music_track_input.clear();
-                        app_data.music_url_input.clear();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("ステータスを設定").clicked() {
-                            if !app_data.music_track_input.is_empty() {
-                                app_data.status_message_input = app_data.music_track_input.clone();
-                                app_data.current_status_type = StatusType::Music;
-                                app_data.show_music_dialog = false;
-                            }
-                        }
-                    });
-                });
-            });
-    }
-
-    // --- Podcast Status Dialog ---
-    if app_data.show_podcast_dialog {
-        egui::Window::new("ポッドキャストステータスを設定")
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.add_space(10.0);
-                    ui.label("エピソードのタイトル");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app_data.podcast_episode_input)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("コジ10 小島秀夫の『最高の10時にしよう』"),
-                    );
-                    ui.add_space(10.0);
-                    ui.label("URL（任意）");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app_data.podcast_url_input)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("https://open.spotify.com/episode/..."),
-                    );
-                    ui.add_space(10.0);
-                });
-
-                ui.separator();
-                ui.add_space(5.0);
-
-                ui.horizontal(|ui| {
-                    if ui.button("キャンセル").clicked() {
-                        app_data.show_podcast_dialog = false;
-                        app_data.podcast_episode_input.clear();
-                        app_data.podcast_url_input.clear();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("ステータスを設定").clicked() {
-                            if !app_data.podcast_episode_input.is_empty() {
-                                app_data.status_message_input = app_data.podcast_episode_input.clone();
-                                app_data.current_status_type = StatusType::Podcast;
-                                app_data.show_podcast_dialog = false;
-                            }
-                        }
-                    });
-                });
-            });
-    }
-
     card_frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.heading(timeline_heading_text);
 
             let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
             if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
-                let followed_pubkeys = app_data.followed_pubkeys.clone();
-                let discover_relays = app_data.discover_relays_editor.clone();
-                let my_keys = app_data.my_keys.clone().unwrap();
+                let client = app_data.nostr_client.as_ref().unwrap().clone();
 
                 app_data.is_loading = true;
                 app_data.should_repaint = true;
 
                 let cloned_app_data_arc = app_data_arc.clone();
                 runtime_handle.spawn(async move {
-                    let timeline_result = fetch_timeline_events(&my_keys, &discover_relays, &followed_pubkeys).await;
+                    let timeline_result = fetch_timeline_events(&client).await;
 
                     let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                     app_data_async.is_loading = false;
@@ -604,7 +454,6 @@ pub fn draw_home_view(
             }
         });
         ui.add_space(10.0);
-        let mut pubkey_to_modify: Option<(PublicKey, bool)> = None;
 
         if app_data.timeline_posts.is_empty() {
             ui.label(no_timeline_message_text);
@@ -682,15 +531,6 @@ pub fn draw_home_view(
                                                 app_data.zap_amount_input = "21".to_string(); // Default amount
                                             }
                                         }
-
-                                        ui.menu_button("...", |ui| {
-                                            let is_followed = app_data.followed_pubkeys.contains(&post.author_pubkey);
-                                            let button_text = if is_followed { "アンフォロー" } else { "フォロー" };
-                                            if ui.button(button_text).clicked() {
-                                                pubkey_to_modify = Some((post.author_pubkey, !is_followed));
-                                                ui.close();
-                                            }
-                                        });
                                     }
                                 }
                             });
@@ -788,39 +628,6 @@ pub fn draw_home_view(
                 app_data.image_cache.insert(url_key, new_state);
                 ctx_clone.request_repaint();
             });
-        }
-
-        if let Some((pubkey, follow)) = pubkey_to_modify {
-            if !app_data.is_loading {
-                let client = app_data.nostr_client.as_ref().unwrap().clone();
-                let keys = app_data.my_keys.as_ref().unwrap().clone();
-                let cache_db_clone = app_data.cache_db.clone();
-
-                app_data.is_loading = true;
-                app_data.should_repaint = true;
-
-                let cloned_app_data_arc = app_data_arc.clone();
-                runtime_handle.spawn(async move {
-                    match update_contact_list(&client, &keys, pubkey, follow).await {
-                        Ok(new_followed_pubkeys) => {
-                            let mut app_data = cloned_app_data_arc.lock().unwrap();
-                            app_data.followed_pubkeys = new_followed_pubkeys;
-                            if let Some(keys) = &app_data.my_keys {
-                                let pubkey_hex = keys.public_key().to_string();
-                                if let Err(e) = cache_db_clone.write_cache(DB_FOLLOWED, &pubkey_hex, &app_data.followed_pubkeys) {
-                                    eprintln!("Failed to write follow list cache: {e}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to update contact list: {e}");
-                        }
-                    }
-                    let mut app_data = cloned_app_data_arc.lock().unwrap();
-                    app_data.is_loading = false;
-                    app_data.should_repaint = true;
-                });
-            }
         }
     });
 

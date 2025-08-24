@@ -1,6 +1,5 @@
 pub mod login_view;
 pub mod home_view;
-pub mod relays_view;
 pub mod profile_view;
 pub mod wallet_view;
 pub mod image_cache;
@@ -19,7 +18,6 @@ impl eframe::App for NostrStatusApp {
         let mut app_data = self.data.lock().unwrap();
 
         let home_tab_text = "ホーム";
-        let relays_tab_text = "リレー";
         let wallet_tab_text = "ウォレット";
         let profile_tab_text = "プロフィール";
 
@@ -64,11 +62,6 @@ impl eframe::App for NostrStatusApp {
                     if app_data.is_logged_in {
                         ui.selectable_value(
                             &mut app_data.current_tab,
-                            AppTab::Relays,
-                            relays_tab_text,
-                        );
-                        ui.selectable_value(
-                            &mut app_data.current_tab,
                             AppTab::Wallet,
                             wallet_tab_text,
                         );
@@ -108,9 +101,6 @@ impl eframe::App for NostrStatusApp {
                     match app_data.current_tab {
                         AppTab::Home => {
                             home_view::draw_home_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
-                        },
-                        AppTab::Relays => {
-                           relays_view::draw_relays_view(ui, &mut app_data, app_data_arc_clone, runtime_handle);
                         },
                         AppTab::Wallet => {
                             wallet_view::draw_wallet_view(ui, &mut app_data, app_data_arc_clone, runtime_handle);
