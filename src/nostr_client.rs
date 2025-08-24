@@ -102,12 +102,25 @@ pub async fn connect_to_relays_with_nip65(
     status_log.push_str("---------------------------------\n");
 
     let mut current_connected_relays = Vec::new();
+ fix-relay-display
+    let mut connected_relays_map: std::collections::HashMap<String, nostr_sdk::RelayStatus> = std::collections::HashMap::new();
+
     let mut connected_relays_map: std::collections::HashMap<String, nostr_sdk::RelayStatus> =
         std::collections::HashMap::new();
+ main
 
     if received_nip65_event && !nip65_relays.is_empty() {
         status_log.push_str("\nNIP-65で検出されたリレーに並列接続中...\n");
         let _ = client.remove_all_relays().await;
+
+ fix-relay-display
+        for (url, policy) in nip65_relays.iter() {
+            if policy.as_deref() == Some("write") || policy.is_none() {
+                if let Err(e) = client.add_relay(url.as_str()).await {
+                    status_log.push_str(&format!("  リレー追加失敗: {} - エラー: {}\n", url, e));
+                } else {
+                    status_log.push_str(&format!("  リレー追加: {}\n", url));
+                }
 
         let relays_to_add: Vec<_> = nip65_relays
             .iter()
@@ -126,6 +139,7 @@ pub async fn connect_to_relays_with_nip65(
             match result {
                 Ok(url) => status_log.push_str(&format!("  リレー追加: {url}\n")),
                 Err(e) => status_log.push_str(&format!("  リレー追加失敗 - エラー: {e}\n")), // URL might not be available on error
+ main
             }
         }
     } else {
@@ -133,6 +147,16 @@ pub async fn connect_to_relays_with_nip65(
             "\nNIP-65リレーリストが見つからなかったため、デフォルトのリレーに並列接続します。\n",
         );
         let _ = client.remove_all_relays().await;
+
+ fix-relay-display
+        let fallback_relays: Vec<String> = default_relays_str.lines().map(|s| s.to_string()).collect();
+        for relay_url in fallback_relays.iter() {
+            if !relay_url.trim().is_empty() {
+                if let Err(e) = client.add_relay(relay_url.trim()).await {
+                    status_log.push_str(&format!("  デフォルトリレー追加失敗: {} - エラー: {}\n", relay_url, e));
+                } else {
+                    status_log.push_str(&format!("  デフォルトリレー追加: {}\n", relay_url));
+                }
 
         let fallback_relays: Vec<String> = default_relays_str
             .lines()
@@ -154,6 +178,7 @@ pub async fn connect_to_relays_with_nip65(
                 Err(e) => status_log.push_str(&format!(
                     "  デフォルトリレー追加失敗: {url} - エラー: {e}\n"
                 )),
+ main
             }
         }
     }
@@ -166,6 +191,16 @@ pub async fn connect_to_relays_with_nip65(
         return Err("接続できるリレーがありません。".into());
     }
 
+ fix-relay-display
+    status_log.push_str(&format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len()));
+    for (url, relay) in relays.iter() {
+        let status = relay.status().await;
+        status_log.push_str(&format!("  - {}: {:?}\n", url, status));
+        current_connected_relays.push(format!("- {}: {:?}", url, status));
+        connected_relays_map.insert(url.to_string(), status);
+    }
+    status_log.push_str("---------------------------------\n");
+
     status_log.push_str(&format!(
         "\n--- 現在接続中のリレー ({}件) ---\n",
         relays.len()
@@ -177,6 +212,7 @@ pub async fn connect_to_relays_with_nip65(
         connected_relays_map.insert(url.to_string(), status);
     }
     status_log.push_str("---------------------------------\n");
+ main
 
     let full_log = format!(
         "{}\n\n--- 現在接続中のリレー ---\n{}",
