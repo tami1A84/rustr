@@ -4,6 +4,7 @@ pub mod profile_view;
 pub mod wallet_view;
 pub mod image_cache;
 pub mod zap;
+pub mod settings_view;
 
 use eframe::egui::{self, Margin};
 // nostr v0.43.0 / nostr-sdk: RelayMetadata は nostr_sdk::nips::nip65 に移動したため import する
@@ -20,6 +21,7 @@ impl eframe::App for NostrPostApp {
         let home_tab_text = "ホーム";
         let wallet_tab_text = "ウォレット";
         let profile_tab_text = "プロフィール";
+        let settings_tab_text = "設定";
 
         // app_data_arc をクローンして非同期タスクに渡す
         let app_data_arc_clone = self.data.clone();
@@ -70,6 +72,11 @@ impl eframe::App for NostrPostApp {
                             AppTab::Profile,
                             profile_tab_text,
                         );
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
+                            AppTab::Settings,
+                            settings_tab_text,
+                        );
                     }
                 });
 
@@ -108,6 +115,9 @@ impl eframe::App for NostrPostApp {
                         AppTab::Profile => {
                             profile_view::draw_profile_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
                         },
+                        AppTab::Settings => {
+                            settings_view::draw_settings_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
+                        }
                     }
                 }
             // }); // この閉じ括弧も削除

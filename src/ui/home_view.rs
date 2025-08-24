@@ -406,13 +406,14 @@ pub fn draw_home_view(
             let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
             if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
                 let client = app_data.nostr_client.as_ref().unwrap().clone();
+                let aggregator_relays = app_data.relays.aggregator.clone();
 
                 app_data.is_loading = true;
                 app_data.should_repaint = true;
 
                 let cloned_app_data_arc = app_data_arc.clone();
                 runtime_handle.spawn(async move {
-                    let timeline_result = fetch_timeline_events(&client).await;
+                    let timeline_result = fetch_timeline_events(&client, aggregator_relays).await;
 
                     let mut app_data_async = cloned_app_data_arc.lock().unwrap();
                     app_data_async.is_loading = false;

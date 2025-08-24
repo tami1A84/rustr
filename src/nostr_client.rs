@@ -1,37 +1,10 @@
 use nostr::{Filter, Kind, PublicKey};
 use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::types::{ProfileMetadata, TimelinePost};
-
-const AGGREGATOR_RELAY: &str = "wss://yabu.me";
-
-// アグリゲーターリレーに接続する関数
-pub async fn connect_to_aggregator_relay(
-    client: &Client,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let mut status_log = String::new();
-
-    status_log.push_str(&format!("アグリゲーターリレーに接続中: {}\n", AGGREGATOR_RELAY));
-    client.add_relay(AGGREGATOR_RELAY).await?;
-    client.connect().await;
-    tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
-
-    let relays = client.relays().await;
-    if relays.is_empty() {
-        return Err("接続できるリレーがありません。".into());
-    }
-
-    status_log.push_str(&format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len()));
-    for (url, relay) in relays.iter() {
-        let status = relay.status();
-        status_log.push_str(&format!("  - {}: {:?}\n", url, status));
-    }
-    status_log.push_str("---------------------------------\n");
-
-    Ok(status_log)
-}
+use crate::types::{NostrPostAppInternal, ProfileMetadata, TimelinePost};
 
 // NIP-01 プロファイルメタデータを取得する関数
 pub async fn fetch_nip01_profile(
@@ -101,15 +74,21 @@ pub async fn get_profile_metadata(
 
 pub async fn fetch_timeline_events(
     client: &Client,
+    aggregator_relays: Vec<String>,
 ) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
     let mut timeline_posts = Vec::new();
+
+    if aggregator_relays.is_empty() {
+        return Ok(timeline_posts);
+    }
 
     let timeline_filter = Filter::new()
         .kind(Kind::TextNote)
         .limit(20);
 
+    println!("Fetching timeline from: {:?}", aggregator_relays);
     let note_events = client
-        .fetch_events(timeline_filter, Duration::from_secs(10))
+        .fetch_events_from(aggregator_relays, timeline_filter, Duration::from_secs(10))
         .await?;
 
     if !note_events.is_empty() {
@@ -157,4 +136,63 @@ pub async fn fetch_timeline_events(
         timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
     }
     Ok(timeline_posts)
+}
+
+// リレーを切り替える関数
+pub async fn switch_relays(app_data_arc: Arc<Mutex<NostrPostAppInternal>>) {
+    let (client, relay_config) = {
+        let app_data = app_data_arc.lock().unwrap();
+        (
+            app_data.nostr_client.clone(),
+            app_data.relays.clone(),
+        )
+    };
+
+    if let Some(client) = client {
+        println!("Switching relays...");
+
+        // 現在のリレーを切断
+        let current_relays = client.relays().await;
+        for (url, _) in current_relays {
+            if let Err(e) = client.remove_relay(url.to_string()).await {
+                eprintln!("Failed to remove relay {}: {}", url, e);
+            }
+        }
+        println!("Disconnected from all relays.");
+
+        // 新しいリレーに接続
+        let all_relays: Vec<String> = relay_config
+            .aggregator
+            .iter()
+            .chain(relay_config.self_hosted.iter())
+            .chain(relay_config.search.iter())
+            .cloned()
+            .collect::<HashSet<_>>() // 重複を削除
+            .into_iter()
+            .collect();
+
+        for relay_url in &all_relays {
+            if let Err(e) = client.add_relay(relay_url.clone()).await {
+                eprintln!("Failed to add relay {}: {}", relay_url, e);
+            }
+        }
+        client.connect().await;
+        println!("Connected to new relays: {:?}", all_relays);
+
+        // 接続状態を更新
+        tokio::time::sleep(Duration::from_secs(2)).await; // 接続安定待ち
+        let relays = client.relays().await;
+        let mut status_log =
+            format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len());
+        for (url, relay) in relays.iter() {
+            let status = relay.status();
+            status_log.push_str(&format!("  - {}: {:?}\n", url, status));
+        }
+        status_log.push_str("---------------------------------\n");
+
+        // UIの状態を更新するために再度ロック
+        let mut app_data = app_data_arc.lock().unwrap();
+        app_data.connected_relays_display = status_log;
+        app_data.should_repaint = true;
+    }
 }

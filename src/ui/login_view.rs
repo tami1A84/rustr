@@ -9,10 +9,10 @@ use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::str::FromStr;
 
 use crate::{
-    types::{Config, NostrPostAppInternal, ProfileMetadata, TimelinePost, AppTab},
+    types::{Config, NostrPostAppInternal, ProfileMetadata, RelayConfig, TimelinePost, AppTab},
     cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE},
     CONFIG_FILE,
-    nostr_client::{connect_to_aggregator_relay, fetch_nip01_profile, fetch_timeline_events}
+    nostr_client::{fetch_nip01_profile, fetch_timeline_events}
 };
 
 // --- Step 1: キャッシュからデータを読み込む ---
@@ -50,7 +50,6 @@ fn load_data_from_cache(
 struct FreshData {
     followed_pubkeys: HashSet<PublicKey>,
     timeline_posts: Vec<TimelinePost>,
-    log_message: String,
     profile_metadata: ProfileMetadata,
     profile_json_string: String,
 }
@@ -59,12 +58,11 @@ async fn fetch_fresh_data_from_network(
     client: &Client,
     keys: &Keys,
     cache_db: &LmdbCache,
+    relay_config: &RelayConfig,
 ) -> Result<FreshData, Box<dyn std::error::Error + Send + Sync>> {
     let pubkey_hex = keys.public_key().to_string();
 
     println!("Fetching fresh data from network...");
-
-    let log_message = connect_to_aggregator_relay(client).await?;
 
     println!("Fetching NIP-02 contact list...");
     let nip02_filter = Filter::new()
@@ -99,7 +97,7 @@ async fn fetch_fresh_data_from_network(
         cache_db.write_cache(DB_FOLLOWED, &pubkey_hex, &followed_pubkeys)?;
     }
 
-    let timeline_posts = fetch_timeline_events(client).await?;
+    let timeline_posts = fetch_timeline_events(client, relay_config.aggregator.clone()).await?;
     cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
 
     let (profile_metadata, profile_json_string) =
@@ -109,7 +107,6 @@ async fn fetch_fresh_data_from_network(
     Ok(FreshData {
         followed_pubkeys,
         timeline_posts,
-        log_message,
         profile_metadata,
         profile_json_string,
     })
@@ -192,7 +189,25 @@ pub fn draw_login_view(
                             });
                         }
 
+                        let relay_config = {
+                            app_data_for_login_logic.lock().unwrap().relays.clone()
+                        };
                         let client = Client::new(keys.clone());
+                        // Connect to all relays
+                        let all_relays: Vec<String> = relay_config
+                            .aggregator
+                            .iter()
+                            .chain(relay_config.self_hosted.iter())
+                            .chain(relay_config.search.iter())
+                            .cloned()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        for relay_url in &all_relays {
+                            client.add_relay(relay_url.clone()).await?;
+                        }
+                        client.connect().await;
+
                         let pubkey_hex = keys.public_key().to_string();
                         if let Ok(cached_data) = load_data_from_cache(&cache_db_clone, &pubkey_hex) {
                             let mut app_data = app_data_for_login_logic.lock().unwrap();
@@ -210,14 +225,23 @@ pub fn draw_login_view(
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
                         }
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone).await;
+                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone, &relay_config).await;
                         if let Ok(fresh_data) = fresh_data_result {
+                            // Get relay status before updating app_data
+                            let relays = client.relays().await;
+                            let mut status_log =
+                                format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len());
+                            for (url, relay) in relays.iter() {
+                                let status = relay.status();
+                                status_log.push_str(&format!("  - {}: {:?}\n", url, status));
+                            }
+                            status_log.push_str("---------------------------------\n");
+
                             let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.followed_pubkeys = fresh_data.followed_pubkeys;
                             app_data.timeline_posts = fresh_data.timeline_posts;
-                            if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
-                                app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
-                            }
+                            app_data.connected_relays_display = status_log;
+
                             let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
                                 .iter()
                                 .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
@@ -313,24 +337,55 @@ pub fn draw_login_view(
                                 encrypted_secret_key: nip49_encoded,
                                 salt: salt_base64,
                                 encrypted_nwc_uri: None,
+                                relays: serde_json::to_value(RelayConfig {
+                                    aggregator: vec!["wss://yabu.me".to_string()],
+                                    ..Default::default()
+                                })?,
+                                theme: Some(crate::types::AppTheme::Light),
                             };
                             let config_json = serde_json::to_string_pretty(&config)?;
                             fs::write(CONFIG_FILE, config_json)?;
                             Ok(user_provided_keys)
                         })()?;
+                        let relay_config = {
+                            cloned_app_data_arc.lock().unwrap().relays.clone()
+                        };
                         let client = Client::new(keys.clone());
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone).await;
+                        // Connect to all relays
+                        let all_relays: Vec<String> = relay_config
+                            .aggregator
+                            .iter()
+                            .chain(relay_config.self_hosted.iter())
+                            .chain(relay_config.search.iter())
+                            .cloned()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        for relay_url in &all_relays {
+                            client.add_relay(relay_url.clone()).await?;
+                        }
+                        client.connect().await;
+
+                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone, &relay_config).await;
                         if let Ok(fresh_data) = fresh_data_result {
+                            let relays = client.relays().await;
+                            let mut status_log =
+                                format!("\n--- 現在接続中のリレー ({}件) ---\n", relays.len());
+                            for (url, relay) in relays.iter() {
+                                let status = relay.status();
+                                status_log.push_str(&format!("  - {}: {:?}\n", url, status));
+                            }
+                            status_log.push_str("---------------------------------\n");
+
                             let mut app_data = cloned_app_data_arc.lock().unwrap();
                             app_data.my_keys = Some(keys.clone());
-                            app_data.nostr_client = Some(client);
+                            app_data.nostr_client = Some(client.clone());
                             app_data.is_logged_in = true;
                             app_data.current_tab = AppTab::Home;
                             app_data.followed_pubkeys = fresh_data.followed_pubkeys;
                             app_data.timeline_posts = fresh_data.timeline_posts;
-                            if let Some(pos) = fresh_data.log_message.find("--- 現在接続中のリレー ---") {
-                                app_data.connected_relays_display = fresh_data.log_message[pos..].to_string();
-                            }
+                            app_data.connected_relays_display = status_log;
+
                             let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
                                 .iter()
                                 .map(|emoji_pair| (emoji_pair[0].clone(), emoji_pair[1].clone()))
