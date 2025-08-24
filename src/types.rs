@@ -9,12 +9,31 @@ use crate::cache_db::LmdbCache;
 
 // --- Pub-used structs and enums ---
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+pub struct RelayConfig {
+    #[serde(default)]
+    pub aggregator: Vec<String>,
+    #[serde(default)]
+    pub self_hosted: Vec<String>,
+    #[serde(default)]
+    pub search: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Config {
+    #[serde(default)]
     pub encrypted_secret_key: String,
+    #[serde(default)]
     pub salt: String,
     #[serde(default)]
     pub encrypted_nwc_uri: Option<String>,
+    // The `relays` field is now a struct, but we want to be able to deserialize
+    // old configs where it was a `Vec<String>`. We handle this in `main.rs:load_config`.
+    // For new configs, it will be a `RelayConfig`.
+    #[serde(default)]
+    pub relays: serde_json::Value,
+    #[serde(default)]
+    pub theme: Option<AppTheme>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -102,6 +121,7 @@ pub enum AppTab {
     Home,
     Wallet,
     Profile,
+    Settings,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
@@ -178,4 +198,10 @@ pub struct NostrPostAppInternal {
     pub show_zap_dialog: bool,
     pub zap_amount_input: String,
     pub zap_target_post: Option<TimelinePost>,
+
+    // Settings
+    pub relays: RelayConfig,
+    pub aggregator_relay_input: String,
+    pub self_hosted_relay_input: String,
+    pub search_relay_input: String,
 }

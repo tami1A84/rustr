@@ -87,9 +87,62 @@ pub struct NostrPostApp {
     runtime: Runtime, // Tokio Runtimeを保持
 }
 
+// --- Config ---
+fn load_config() -> (Config, RelayConfig) {
+    if Path::new(CONFIG_FILE).exists() {
+        let config_str = fs::read_to_string(CONFIG_FILE).unwrap_or_default();
+        let config: Config = serde_json::from_str(&config_str).unwrap_or_default();
+
+        // Migrate from old `Vec<String>` relay format if necessary
+        let relay_config = serde_json::from_value::<RelayConfig>(config.relays.clone())
+            .unwrap_or_else(|_| {
+                let old_relays: Vec<String> =
+                    serde_json::from_value(config.relays.clone()).unwrap_or_default();
+                RelayConfig {
+                    aggregator: old_relays,
+                    self_hosted: vec![],
+                    search: vec![],
+                }
+            });
+
+        (config, relay_config)
+    } else {
+        (Config::default(), RelayConfig::default())
+    }
+}
+
+
+pub fn save_config(app_data: &mut NostrPostAppInternal) {
+    // Load the existing config to preserve sensitive fields like the secret key.
+    let mut current_config: Config = if Path::new(CONFIG_FILE).exists() {
+        let config_str = fs::read_to_string(CONFIG_FILE).unwrap_or_default();
+        serde_json::from_str(&config_str).unwrap_or_default()
+    } else {
+        Config::default()
+    };
+
+    // Update the fields from the current app state.
+    current_config.relays = serde_json::to_value(app_data.relays.clone()).unwrap();
+    current_config.theme = Some(app_data.current_theme);
+
+    // Write the updated config back.
+    match fs::write(
+        CONFIG_FILE,
+        serde_json::to_string_pretty(&current_config).unwrap(),
+    ) {
+        Ok(_) => println!("Config saved successfully."),
+        Err(e) => eprintln!("Failed to save config: {}", e),
+    }
+}
+
+
 impl NostrPostApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let runtime = Runtime::new().expect("Failed to create Tokio runtime");
+
+        // --- 設定ファイルの読み込み ---
+        let (_config, relay_config) = load_config();
+        let theme = _config.theme.unwrap_or(AppTheme::Light);
 
         // egui のスタイル設定
         _cc.egui_ctx.set_pixels_per_point(1.2); // UIのスケールを調整
@@ -119,7 +172,10 @@ impl NostrPostApp {
         _cc.egui_ctx.set_fonts(fonts);
 
         // --- スタイル調整 ---
-        style.visuals = theme::light_visuals(); // ライトモードを基準にする
+        style.visuals = match theme {
+            AppTheme::Light => theme::light_visuals(),
+            AppTheme::Dark => theme::dark_visuals(),
+        };
 
         // 角丸やテキストスタイルは共通で設定
         let corner_radius = 6.0;
@@ -158,6 +214,14 @@ impl NostrPostApp {
         let lmdb_cache =
             LmdbCache::new(Path::new(DB_PATH)).expect("Failed to initialize LMDB cache");
 
+        let mut initial_relays = relay_config;
+        if initial_relays.aggregator.is_empty()
+            && initial_relays.self_hosted.is_empty()
+            && initial_relays.search.is_empty()
+        {
+            initial_relays.aggregator.push("wss://yabu.me".to_string());
+        }
+
         let app_data_internal = NostrPostAppInternal {
             nwc_uri_input: String::new(),
             cache_db: lmdb_cache,
@@ -181,7 +245,7 @@ impl NostrPostApp {
             nip01_profile_display: String::new(),
             editable_profile: ProfileMetadata::default(),
             profile_fetch_status: "Fetching profile...".to_string(),
-            current_theme: AppTheme::Light,
+            current_theme: theme,
             image_cache: HashMap::new(),
             nwc_passphrase_input: String::new(),
             nwc: None,
@@ -193,6 +257,10 @@ impl NostrPostApp {
             show_zap_dialog: false,
             zap_amount_input: String::new(),
             zap_target_post: None,
+            relays: initial_relays,
+            aggregator_relay_input: String::new(),
+            self_hosted_relay_input: String::new(),
+            search_relay_input: String::new(),
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 
@@ -214,13 +282,6 @@ impl NostrPostApp {
             }
 
             let mut app_data = data_clone.lock().unwrap();
-            // println!("Checking config file...");
-
-            if Path::new(CONFIG_FILE).exists() {
-                // println!("Existing user: Please enter your passphrase.");
-            } else {
-                // println!("First-time setup: Enter your secret key and set a passphrase.");
-            }
             app_data.should_repaint = true;
         });
 
