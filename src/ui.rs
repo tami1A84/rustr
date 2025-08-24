@@ -38,7 +38,7 @@ impl eframe::App for NostrPostApp {
                 ui.add_space(5.0);
 
                 ui.horizontal(|ui| {
-                    ui.heading("なう");
+                    ui.heading("rustr");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (icon, new_theme) = match app_data.current_theme {
                             AppTheme::Light => ("☀️", AppTheme::Dark),
