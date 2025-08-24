@@ -108,13 +108,13 @@ pub async fn fetch_timeline_events(
         .kind(Kind::TextNote)
         .limit(20);
 
-    let status_events = client
+    let note_events = client
         .fetch_events(timeline_filter, Duration::from_secs(10))
         .await?;
 
-    if !status_events.is_empty() {
+    if !note_events.is_empty() {
         let author_pubkeys: HashSet<PublicKey> =
-            status_events.iter().map(|e| e.pubkey).collect();
+            note_events.iter().map(|e| e.pubkey).collect();
         let metadata_filter = Filter::new()
             .authors(author_pubkeys.into_iter())
             .kind(Kind::Metadata);
@@ -128,7 +128,7 @@ pub async fn fetch_timeline_events(
             }
         }
 
-        for event in status_events {
+        for event in note_events {
             let emojis = event
                 .tags
                 .iter()

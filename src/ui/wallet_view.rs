@@ -9,15 +9,15 @@ use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
 
 use crate::nostr_client::get_profile_metadata;
-use crate::types::{Config, NostrStatusAppInternal, ProfileMetadata, ZapReceipt};
+use crate::types::{Config, NostrPostAppInternal, ProfileMetadata, ZapReceipt};
 use crate::{nip49, CONFIG_FILE};
 use chrono::{DateTime, Utc};
 use lightning_invoice::Bolt11Invoice;
 
 pub fn draw_wallet_view(
     ui: &mut egui::Ui,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: Handle,
 ) {
     ui.heading("ウォレット");
@@ -42,8 +42,8 @@ pub fn draw_wallet_view(
 
 fn draw_wallet_details(
     ui: &mut egui::Ui,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: Handle,
 ) {
     ui.label("ウォレット接続済み");
@@ -99,8 +99,8 @@ fn draw_wallet_details(
 
 fn draw_setup_view(
     ui: &mut egui::Ui,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: Handle,
 ) {
     ui.label("Nostrウォレットに接続");
@@ -141,7 +141,7 @@ fn draw_setup_view(
 async fn save_and_connect(
     nwc_uri_str: String,
     passphrase: String,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if passphrase.is_empty() {
         return Err("パスフレーズは空にできません".into());
@@ -171,7 +171,7 @@ async fn save_and_connect(
 
 pub async fn connect_nwc(
     nwc_uri: NostrWalletConnectURI,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let keys = Keys::new(nwc_uri.secret.clone());
     let client = Client::new(keys);
@@ -212,7 +212,7 @@ pub async fn connect_nwc(
 async fn listen_for_nwc_responses(
     _client: Client,
     _nwc: NostrWalletConnectURI,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
 ) {
     // We keep the listener active for potential future uses,
     // like real-time updates, but for now it only handles PayInvoice responses.
@@ -249,7 +249,7 @@ async fn listen_for_nwc_responses(
 }
 
 async fn get_zap_history(
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (client, my_pubkey) = {
         let mut app_data = app_data_arc.lock().unwrap();
