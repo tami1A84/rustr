@@ -7,13 +7,13 @@ use regex::Regex;
 use crate::{
     types::*,
     nostr_client::fetch_timeline_events,
-    MAX_STATUS_LENGTH,
+    MAX_POST_LENGTH,
     ui::{image_cache, zap},
 };
 
 fn render_post_content(
     ui: &mut egui::Ui,
-    app_data: &NostrStatusAppInternal,
+    app_data: &NostrPostAppInternal,
     post: &TimelinePost,
     urls_to_load: &mut Vec<(String, ImageKind)>,
     my_emojis: &HashMap<String, String>,
@@ -114,13 +114,13 @@ fn render_post_content(
 pub fn draw_home_view(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: tokio::runtime::Handle,
 ) {
     let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
     let new_post_window_title_text = "新規投稿";
-    let status_input_hint_text = "いまどうしてる？";
+    let post_input_hint_text = "新しい投稿";
     let publish_button_text = "公開";
     let cancel_button_text = "キャンセル";
     let timeline_heading_text = "ホーム";
@@ -247,10 +247,10 @@ pub fn draw_home_view(
                                 app_data.show_emoji_picker = !app_data.show_emoji_picker;
                             }
 
-                            let count = app_data.status_message_input.chars().count();
-                            let counter_string = format!("{}/{}", count, MAX_STATUS_LENGTH);
+                            let count = app_data.post_input.chars().count();
+                            let counter_string = format!("{}/{}", count, MAX_POST_LENGTH);
                             let mut counter_text = egui::RichText::new(counter_string);
-                            if count > MAX_STATUS_LENGTH {
+                            if count > MAX_POST_LENGTH {
                                 counter_text = counter_text.color(egui::Color32::RED);
                             }
                             ui.label(counter_text);
@@ -259,19 +259,19 @@ pub fn draw_home_view(
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.button(cancel_button_text).clicked() {
                                     app_data.show_post_dialog = false;
-                                    app_data.status_message_input.clear();
+                                    app_data.post_input.clear();
                                 }
                                 if ui.button(publish_button_text).clicked() && !app_data.is_loading {
-                                    let status_message = app_data.status_message_input.clone();
-                                    let client_clone_nip38_send = app_data.nostr_client.as_ref().unwrap().clone();
-                                    let keys_clone_nip38_send = app_data.my_keys.clone().unwrap();
+                                    let post_content = app_data.post_input.clone();
+                                    let client_clone = app_data.nostr_client.as_ref().unwrap().clone();
+                                    let keys_clone = app_data.my_keys.clone().unwrap();
 
                                     app_data.is_loading = true;
                                     app_data.should_repaint = true;
-                                    println!("Publishing NIP-38 status...");
+                                    println!("Publishing post...");
 
-                                    if status_message.chars().count() > MAX_STATUS_LENGTH {
-                                        eprintln!("Status is too long (max {MAX_STATUS_LENGTH} chars)");
+                                    if post_content.chars().count() > MAX_POST_LENGTH {
+                                        eprintln!("Post is too long (max {MAX_POST_LENGTH} chars)");
                                         app_data.is_loading = false;
                                         app_data.should_repaint = true;
                                         return;
@@ -285,7 +285,7 @@ pub fn draw_home_view(
                                         // --- Emoji Tags ---
                                         let re = Regex::new(r":(\w+):").unwrap();
                                         let mut used_emojis: std::collections::HashSet<String> = std::collections::HashSet::new();
-                                        for cap in re.captures_iter(&status_message) {
+                                        for cap in re.captures_iter(&post_content) {
                                             if let Some(shortcode) = cap.get(1) {
                                                 used_emojis.insert(shortcode.as_str().to_string());
                                             }
@@ -298,21 +298,21 @@ pub fn draw_home_view(
                                             }
                                         }
 
-                                        let event_result = EventBuilder::new(Kind::TextNote, status_message.clone())
+                                        let event_result = EventBuilder::new(Kind::TextNote, post_content.clone())
                                             .tags(tags)
-                                            .sign(&keys_clone_nip38_send)
+                                            .sign(&keys_clone)
                                             .await;
 
                                         match event_result {
-                                            Ok(event) => match client_clone_nip38_send.send_event(&event).await {
+                                            Ok(event) => match client_clone.send_event(&event).await {
                                                 Ok(event_id) => {
-                                                    println!("Status published with event id: {event_id:?}");
+                                                    println!("Post published with event id: {event_id:?}");
                                                     let mut data = cloned_app_data_arc.lock().unwrap();
-                                                    data.status_message_input.clear();
+                                                    data.post_input.clear();
                                                     data.show_post_dialog = false;
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Failed to publish status: {e}");
+                                                    eprintln!("Failed to publish post: {e}");
                                                 }
                                             },
                                             Err(e) => {
@@ -332,10 +332,10 @@ pub fn draw_home_view(
                     ui.add_space(15.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.add(
-                            egui::TextEdit::multiline(&mut app_data.status_message_input)
+                            egui::TextEdit::multiline(&mut app_data.post_input)
                                 .desired_rows(5)
                                 .desired_width(f32::INFINITY)
-                                .hint_text(status_input_hint_text),
+                                .hint_text(post_input_hint_text),
                         );
                     });
                 });
@@ -384,7 +384,7 @@ pub fn draw_home_view(
                                     }
 
                                     if response.clicked() {
-                                        app_data.status_message_input.push_str(&format!(":{}:", shortcode));
+                                        app_data.post_input.push_str(&format!(":{}:", shortcode));
                                         app_data.show_emoji_picker = false;
                                     }
                                     response.on_hover_text(&format!(":{}:", shortcode));
@@ -431,12 +431,12 @@ pub fn draw_home_view(
 
                                 if added_posts > 0 {
                                     app_data_async.timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                                    println!("Added {} new statuses to the timeline.", added_posts);
+                                    println!("Added {} new posts to the timeline.", added_posts);
                                 } else {
-                                    println!("No new statuses found.");
+                                    println!("No new posts found.");
                                 }
                             } else {
-                                println!("Fetched 0 statuses.");
+                                println!("Fetched 0 posts.");
                             }
                         },
                         Err(e) => {

@@ -8,12 +8,12 @@ pub mod zap;
 use eframe::egui::{self, Margin};
 // nostr v0.43.0 / nostr-sdk: RelayMetadata は nostr_sdk::nips::nip65 に移動したため import する
 use crate::{
-    NostrStatusApp,
+    NostrPostApp,
     theme::{dark_visuals, light_visuals},
     types::*,
 };
 
-impl eframe::App for NostrStatusApp {
+impl eframe::App for NostrPostApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut app_data = self.data.lock().unwrap();
 

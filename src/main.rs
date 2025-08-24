@@ -25,7 +25,7 @@ const CONFIG_FILE: &str = "config.json"; // 設定ファイル名
 const DB_PATH: &str = "cache_db";
 const CACHE_DIR: &str = "cache"; // Re-added for migration
 
-const MAX_STATUS_LENGTH: usize = 140; // ステータス最大文字数
+const MAX_POST_LENGTH: usize = 140; // 投稿の最大文字数
 
 async fn migrate_data_from_files(
     cache_db: &LmdbCache,
@@ -82,12 +82,12 @@ async fn migrate_data_from_files(
 }
 
 // eframe::Appトレイトを実装する構造体
-pub struct NostrStatusApp {
-    data: Arc<Mutex<NostrStatusAppInternal>>,
+pub struct NostrPostApp {
+    data: Arc<Mutex<NostrPostAppInternal>>,
     runtime: Runtime, // Tokio Runtimeを保持
 }
 
-impl NostrStatusApp {
+impl NostrPostApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let runtime = Runtime::new().expect("Failed to create Tokio runtime");
 
@@ -158,11 +158,11 @@ impl NostrStatusApp {
         let lmdb_cache =
             LmdbCache::new(Path::new(DB_PATH)).expect("Failed to initialize LMDB cache");
 
-        let app_data_internal = NostrStatusAppInternal {
+        let app_data_internal = NostrPostAppInternal {
             nwc_uri_input: String::new(),
             cache_db: lmdb_cache,
             is_logged_in: false,
-            status_message_input: String::new(),
+            post_input: String::new(),
             show_post_dialog: false,
             show_emoji_picker: false,
             my_emojis: HashMap::new(),
@@ -239,6 +239,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "N",
         options,
-        Box::new(|cc| Ok(Box::new(NostrStatusApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(NostrPostApp::new(cc)))),
     )
 }

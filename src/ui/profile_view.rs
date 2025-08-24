@@ -12,8 +12,8 @@ use crate::{
 pub fn draw_profile_view(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: tokio::runtime::Handle,
 ) {
     let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
@@ -225,7 +225,7 @@ pub fn draw_profile_view(
                     app_data.followed_pubkeys.clear();
                     app_data.followed_pubkeys_display.clear();
                     app_data.timeline_posts.clear();
-                    app_data.status_message_input.clear();
+                    app_data.post_input.clear();
                     app_data.passphrase_input.clear();
                     app_data.confirm_passphrase_input.clear();
                     app_data.secret_key_input.clear();

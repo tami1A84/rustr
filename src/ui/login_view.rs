@@ -9,7 +9,7 @@ use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::str::FromStr;
 
 use crate::{
-    types::{Config, NostrStatusAppInternal, ProfileMetadata, TimelinePost, AppTab},
+    types::{Config, NostrPostAppInternal, ProfileMetadata, TimelinePost, AppTab},
     cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE},
     CONFIG_FILE,
     nostr_client::{connect_to_aggregator_relay, fetch_nip01_profile, fetch_timeline_events}
@@ -118,8 +118,8 @@ async fn fetch_fresh_data_from_network(
 
 pub fn draw_login_view(
     ui: &mut egui::Ui,
-    app_data: &mut NostrStatusAppInternal,
-    app_data_arc: Arc<Mutex<NostrStatusAppInternal>>,
+    app_data: &mut NostrPostAppInternal,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: tokio::runtime::Handle,
 ) {
     let login_heading_text = "ログインまたは登録";
