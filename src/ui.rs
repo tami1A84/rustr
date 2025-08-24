@@ -5,6 +5,7 @@ pub mod wallet_view;
 pub mod image_cache;
 pub mod zap;
 pub mod settings_view;
+pub mod search_view;
 
 use eframe::egui::{self, Margin};
 // nostr v0.43.0 / nostr-sdk: RelayMetadata は nostr_sdk::nips::nip65 に移動したため import する
@@ -19,6 +20,7 @@ impl eframe::App for NostrPostApp {
         let mut app_data = self.data.lock().unwrap();
 
         let home_tab_text = "ホーム";
+        let search_tab_text = "検索";
         let wallet_tab_text = "ウォレット";
         let profile_tab_text = "プロフィール";
         let settings_tab_text = "設定";
@@ -62,6 +64,11 @@ impl eframe::App for NostrPostApp {
 
                     ui.selectable_value(&mut app_data.current_tab, AppTab::Home, home_tab_text);
                     if app_data.is_logged_in {
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
+                            AppTab::Search,
+                            search_tab_text,
+                        );
                         ui.selectable_value(
                             &mut app_data.current_tab,
                             AppTab::Wallet,
@@ -108,6 +115,9 @@ impl eframe::App for NostrPostApp {
                     match app_data.current_tab {
                         AppTab::Home => {
                             home_view::draw_home_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
+                        },
+                        AppTab::Search => {
+                            search_view::draw_search_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
                         },
                         AppTab::Wallet => {
                             wallet_view::draw_wallet_view(ui, &mut app_data, app_data_arc_clone, runtime_handle);

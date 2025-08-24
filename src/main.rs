@@ -261,6 +261,8 @@ impl NostrPostApp {
             aggregator_relay_input: String::new(),
             self_hosted_relay_input: String::new(),
             search_relay_input: String::new(),
+            search_input: String::new(),
+            search_results: Vec::new(),
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 

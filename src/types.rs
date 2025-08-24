@@ -119,6 +119,7 @@ pub struct TimelinePost {
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum AppTab {
     Home,
+    Search,
     Wallet,
     Profile,
     Settings,
@@ -204,4 +205,8 @@ pub struct NostrPostAppInternal {
     pub aggregator_relay_input: String,
     pub self_hosted_relay_input: String,
     pub search_relay_input: String,
+
+    // Search
+    pub search_input: String,
+    pub search_results: Vec<TimelinePost>,
 }

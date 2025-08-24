@@ -138,6 +138,64 @@ pub async fn fetch_timeline_events(
     Ok(timeline_posts)
 }
 
+pub async fn search_events(
+    search_relays: Vec<String>,
+    query: String,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    if search_relays.is_empty() || query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let client = Client::new(nostr::Keys::generate());
+    for relay_url in &search_relays {
+        if let Err(e) = client.add_relay(relay_url.clone()).await {
+            eprintln!("Failed to add search relay {}: {}", relay_url, e);
+        }
+    }
+    client.connect().await;
+
+    let search_filter = Filter::new().search(query).kind(Kind::TextNote).limit(50);
+
+    let events = client.fetch_events_from(search_relays, search_filter, Duration::from_secs(10)).await?;
+
+    let mut timeline_posts = Vec::new();
+    if !events.is_empty() {
+        let author_pubkeys: HashSet<PublicKey> =
+            events.iter().map(|e| e.pubkey).collect();
+        let metadata_filter = Filter::new()
+            .authors(author_pubkeys.into_iter())
+            .kind(Kind::Metadata);
+
+        // Fetch metadata from the same search relays
+        let metadata_events = client.fetch_events(metadata_filter, Duration::from_secs(5)).await?;
+
+        let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+        for event in metadata_events {
+            if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
+                profiles.insert(event.pubkey, metadata);
+            }
+        }
+
+        for event in events {
+            timeline_posts.push(TimelinePost {
+                id: event.id,
+                kind: event.kind,
+                author_pubkey: event.pubkey,
+                author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                content: event.content.clone(),
+                created_at: event.created_at,
+                emojis: HashMap::new(), // Search results don't typically have emoji info in the same way
+                tags: event.tags.to_vec(),
+            });
+        }
+        timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+    }
+
+    client.disconnect().await;
+    Ok(timeline_posts)
+}
+
+
 // リレーを切り替える関数
 pub async fn switch_relays(app_data_arc: Arc<Mutex<NostrPostAppInternal>>) {
     let (client, relay_config) = {
