@@ -264,6 +264,7 @@ impl NostrPostApp {
             search_input: String::new(),
             search_results: Vec::new(),
             quoted_posts_cache: HashMap::new(),
+            profile_cache: HashMap::new(),
             posts_to_fetch: Arc::new(Mutex::new(HashSet::new())),
             profile_posts: Vec::new(),
             is_fetching_profile_posts: false,

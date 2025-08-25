@@ -1,5 +1,5 @@
 use eframe::egui;
-use nostr::{nips::nip19::ToBech32, EventBuilder, Kind, Tag, Filter, PublicKey, TagStandard};
+use nostr::{nips::nip19::ToBech32, EventBuilder, Kind, Tag, Filter, TagStandard};
 use regex::Regex;
 use std::sync::{Arc, Mutex};
 use std::collections::{HashSet, HashMap};
@@ -19,80 +19,93 @@ pub fn draw_home_view(
     runtime_handle: tokio::runtime::Handle,
 ) {
     // --- Quote Fetching Logic ---
-    let mut ids_to_fetch = HashSet::new();
+    let mut items_to_fetch = HashSet::new();
     if let Ok(mut posts_to_fetch) = app_data.posts_to_fetch.lock() {
         if !posts_to_fetch.is_empty() {
-            ids_to_fetch = posts_to_fetch.clone();
+            items_to_fetch = posts_to_fetch.clone();
             posts_to_fetch.clear();
         }
     }
 
-    if !ids_to_fetch.is_empty() {
+    if !items_to_fetch.is_empty() {
         if let Some(client) = app_data.nostr_client.as_ref() {
             let client = client.clone();
             let app_data_clone = app_data_arc.clone();
+            let profile_cache_clone = app_data.profile_cache.clone();
 
             runtime_handle.spawn(async move {
-                let events_filter = Filter::new().ids(ids_to_fetch.clone());
+                // 1. Fetch event content for all items that need fetching.
+                let event_ids_to_fetch: HashSet<nostr::EventId> = items_to_fetch.iter().map(|item| *item).collect();
+                let events = if !event_ids_to_fetch.is_empty() {
+                    let events_filter = Filter::new().ids(event_ids_to_fetch);
+                    client.fetch_events(events_filter, std::time::Duration::from_secs(10)).await.unwrap_or_default().into_iter().collect()
+                } else {
+                    Vec::<nostr::Event>::new()
+                };
 
-                if let Ok(events) = client.fetch_events(events_filter, std::time::Duration::from_secs(10)).await {
-                    if events.is_empty() {
-                        return;
+                if events.is_empty() {
+                    return;
+                }
+
+                // 2. Determine which author profiles we need to fetch.
+                let mut profiles_to_fetch = HashSet::new();
+                for event in &events {
+                    if !profile_cache_clone.contains_key(&event.pubkey) {
+                        profiles_to_fetch.insert(event.pubkey);
                     }
+                }
 
-                    let author_pubkeys: HashSet<PublicKey> = events.iter()
-                        .filter(|e| e.kind == Kind::TextNote)
-                        .map(|e| e.pubkey)
-                        .collect();
-
-                    let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
-                    if !author_pubkeys.is_empty() {
-                        let metadata_filter = Filter::new().authors(author_pubkeys).kind(Kind::Metadata);
-                        if let Ok(metadata_events) = client.fetch_events(metadata_filter, std::time::Duration::from_secs(5)).await {
-                            for event in metadata_events {
-                                if let Ok(metadata) = serde_json::from_str(&event.content) {
-                                    profiles.insert(event.pubkey, metadata);
-                                }
+                // 3. Fetch the missing profiles.
+                let mut new_profiles = HashMap::new();
+                if !profiles_to_fetch.is_empty() {
+                    let metadata_filter = Filter::new().authors(profiles_to_fetch).kind(Kind::Metadata);
+                    if let Ok(metadata_events) = client.fetch_events(metadata_filter, std::time::Duration::from_secs(5)).await {
+                        for event in metadata_events {
+                            if let Ok(metadata) = serde_json::from_str(&event.content) {
+                                new_profiles.insert(event.pubkey, metadata);
                             }
                         }
                     }
+                }
 
-                    let mut fetched_posts = HashMap::new();
-                    for event in events {
-                        if event.kind == Kind::TextNote {
-                            let author_metadata = profiles.get(&event.pubkey).cloned().unwrap_or_default();
+                // 4. Combine existing cache, new profiles, and fetched events to create the final posts.
+                let mut profiles = profile_cache_clone;
+                profiles.extend(new_profiles.clone());
 
-                            let emojis = event
-                                .tags
-                                .iter()
-                                .filter_map(|tag| {
-                                    if let Some(TagStandard::Emoji { shortcode, url }) = tag.as_standardized() {
-                                        Some((shortcode.to_string(), url.to_string()))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
+                let fetched_posts: HashMap<nostr::EventId, Arc<TimelinePost>> = events.into_iter()
+                    .filter(|e| e.kind == Kind::TextNote)
+                    .map(|event| {
+                        let author_metadata = profiles.get(&event.pubkey).cloned().unwrap_or_default();
+                        let emojis = event.tags.iter().filter_map(|tag| {
+                            if let Some(TagStandard::Emoji { shortcode, url }) = tag.as_standardized() {
+                                Some((shortcode.to_string(), url.to_string()))
+                            } else {
+                                None
+                            }
+                        }).collect();
 
-                            let timeline_post = TimelinePost {
-                                id: event.id,
-                                kind: event.kind,
-                                author_pubkey: event.pubkey,
-                                author_metadata,
-                                content: event.content.clone(),
-                                created_at: event.created_at,
-                                emojis,
-                                tags: event.tags.to_vec(),
-                            };
-                            fetched_posts.insert(event.id, Arc::new(timeline_post));
-                        }
+                        let timeline_post = Arc::new(TimelinePost {
+                            id: event.id,
+                            kind: event.kind,
+                            author_pubkey: event.pubkey,
+                            author_metadata,
+                            content: event.content.clone(),
+                            created_at: event.created_at,
+                            emojis,
+                            tags: event.tags.to_vec(),
+                        });
+                        (event.id, timeline_post)
+                    })
+                    .collect();
+
+                // 5. Update the application state with the newly fetched data.
+                if !fetched_posts.is_empty() {
+                    let mut data = app_data_clone.lock().unwrap();
+                    data.quoted_posts_cache.extend(fetched_posts);
+                    if !new_profiles.is_empty() {
+                        data.profile_cache.extend(new_profiles);
                     }
-
-                    if !fetched_posts.is_empty() {
-                        let mut data = app_data_clone.lock().unwrap();
-                        data.quoted_posts_cache.extend(fetched_posts);
-                        data.should_repaint = true;
-                    }
+                    data.should_repaint = true;
                 }
             });
         }
