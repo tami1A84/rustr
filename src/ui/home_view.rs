@@ -1,12 +1,11 @@
 use eframe::egui;
-use nostr::{nips::nip19::ToBech32, EventBuilder, EventId, Kind, Tag};
+use nostr::{nips::nip19::ToBech32, EventBuilder, Kind, Tag};
 use regex::Regex;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    nostr_client::fetch_timeline_events,
     types::*,
-    ui::{image_cache, post, zap},
+    ui::{image_cache, post, zap, events},
     MAX_POST_LENGTH,
 };
 
@@ -304,47 +303,37 @@ pub fn draw_home_view(
 
             let fetch_button = egui::Button::new(egui::RichText::new(fetch_latest_button_text).strong());
             if ui.add_enabled(!app_data.is_loading, fetch_button).clicked() {
-                let client = app_data.nostr_client.as_ref().unwrap().clone();
-                let aggregator_relays = app_data.relays.aggregator.clone();
+                if let (Some(client), Some(keys)) = (
+                    app_data.nostr_client.as_ref(),
+                    app_data.my_keys.as_ref(),
+                ) {
+                    let client = client.clone();
+                    let keys = keys.clone();
+                    let cache_db = app_data.cache_db.clone();
+                    let relay_config = app_data.relays.clone();
+                    let cloned_app_data_arc = app_data_arc.clone();
 
-                app_data.is_loading = true;
-                app_data.should_repaint = true;
+                    app_data.is_loading = true;
+                    app_data.should_repaint = true;
 
-                let cloned_app_data_arc = app_data_arc.clone();
-                runtime_handle.spawn(async move {
-                    let timeline_result = fetch_timeline_events(&client, aggregator_relays).await;
-
-                    let mut app_data_async = cloned_app_data_arc.lock().unwrap();
-                    app_data_async.is_loading = false;
-                    match timeline_result {
-                        Ok(new_posts) => {
-                            if !new_posts.is_empty() {
-                                let mut existing_ids: std::collections::HashSet<EventId> = app_data_async.timeline_posts.iter().map(|p| p.id).collect();
-                                let mut added_posts = 0;
-                                for post in new_posts {
-                                    if !existing_ids.contains(&post.id) {
-                                        existing_ids.insert(post.id);
-                                        app_data_async.timeline_posts.push(post);
-                                        added_posts += 1;
-                                    }
-                                }
-
-                                if added_posts > 0 {
-                                    app_data_async.timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                                    println!("Added {} new posts to the timeline.", added_posts);
-                                } else {
-                                    println!("No new posts found.");
-                                }
-                            } else {
-                                println!("Fetched 0 posts.");
+                    runtime_handle.spawn(async move {
+                        match events::refresh_all_data(&client, &keys, &cache_db, &relay_config).await {
+                            Ok(fresh_data) => {
+                                let mut app_data = cloned_app_data_arc.lock().unwrap();
+                                app_data.timeline_posts = fresh_data.timeline_posts;
+                                app_data.notification_posts = fresh_data.notification_posts;
+                                app_data.editable_profile = fresh_data.profile_metadata;
+                                println!("Refreshed all data from home view.");
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("Failed to fetch timeline: {e}");
+                            Err(e) => {
+                                eprintln!("Failed to refresh data: {}", e);
+                            }
                         }
-                    }
-                    app_data_async.should_repaint = true;
-                });
+                        let mut app_data = cloned_app_data_arc.lock().unwrap();
+                        app_data.is_loading = false;
+                        app_data.should_repaint = true;
+                    });
+                }
             }
 
             if app_data.is_loading {

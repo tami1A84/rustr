@@ -12,6 +12,7 @@ pub const DB_PROFILES: &str = "profiles";
 pub const DB_FOLLOWED: &str = "followed_pubkeys";
 pub const DB_RELAYS: &str = "nip65_relays";
 pub const DB_TIMELINE: &str = "timeline_posts";
+pub const DB_NOTIFICATIONS: &str = "notification_posts";
 pub const DB_IMAGES: &str = "images";
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ impl LmdbCache {
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_FOLLOWED))?;
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_RELAYS))?;
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_TIMELINE))?;
+        let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_NOTIFICATIONS))?;
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_IMAGES))?;
         txn.commit()?;
 

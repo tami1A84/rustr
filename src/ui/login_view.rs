@@ -3,16 +3,15 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
-use std::time::Duration;
-use nostr::{nips::nip47::NostrWalletConnectURI, Filter, Keys, Kind, PublicKey};
-use nostr_sdk::{Client, SubscribeAutoCloseOptions};
+use nostr::{nips::nip47::NostrWalletConnectURI, Keys, PublicKey};
+use nostr_sdk::{Client};
 use std::str::FromStr;
 
 use crate::{
     types::{Config, NostrPostAppInternal, ProfileMetadata, RelayConfig, TimelinePost, AppTab},
-    cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE},
+    cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE, DB_NOTIFICATIONS},
     CONFIG_FILE,
-    nostr_client::{fetch_nip01_profile, fetch_timeline_events}
+    ui::events::{refresh_all_data}
 };
 
 // --- Step 1: キャッシュからデータを読み込む ---
@@ -20,6 +19,7 @@ struct CachedData {
     followed_pubkeys: HashSet<PublicKey>,
     profile_metadata: ProfileMetadata,
     timeline_posts: Vec<TimelinePost>,
+    notification_posts: Vec<TimelinePost>,
 }
 
 fn load_data_from_cache(
@@ -33,6 +33,9 @@ fn load_data_from_cache(
     let timeline_cache = cache_db
         .read_cache::<Vec<TimelinePost>>(DB_TIMELINE, pubkey_hex)
         .ok();
+    let notification_cache = cache_db
+        .read_cache::<Vec<TimelinePost>>(DB_NOTIFICATIONS, pubkey_hex)
+        .ok();
 
     if followed_cache.is_expired() || profile_cache.is_expired() {
         return Err("Cache expired".into());
@@ -43,75 +46,9 @@ fn load_data_from_cache(
         followed_pubkeys: followed_cache.data,
         profile_metadata: profile_cache.data,
         timeline_posts: timeline_cache.map_or(Vec::new(), |c| c.data),
+        notification_posts: notification_cache.map_or(Vec::new(), |c| c.data),
     })
 }
-
-// --- Step 2: ネットワークから新しいデータを取得 ---
-struct FreshData {
-    followed_pubkeys: HashSet<PublicKey>,
-    timeline_posts: Vec<TimelinePost>,
-    profile_metadata: ProfileMetadata,
-    profile_json_string: String,
-}
-
-async fn fetch_fresh_data_from_network(
-    client: &Client,
-    keys: &Keys,
-    cache_db: &LmdbCache,
-    relay_config: &RelayConfig,
-) -> Result<FreshData, Box<dyn std::error::Error + Send + Sync>> {
-    let pubkey_hex = keys.public_key().to_string();
-
-    println!("Fetching fresh data from network...");
-
-    println!("Fetching NIP-02 contact list...");
-    let nip02_filter = Filter::new()
-        .authors(vec![keys.public_key()])
-        .kind(Kind::ContactList)
-        .limit(1);
-    let nip02_filter_id = client
-        .subscribe(nip02_filter, Some(SubscribeAutoCloseOptions::default()))
-        .await?;
-
-    let mut followed_pubkeys = HashSet::new();
-    let mut received_nip02 = false;
-
-    tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(10)) => {}
-        _ = async {
-            let mut notifications = client.notifications();
-            while let Ok(notification) = notifications.recv().await {
-                if let nostr_sdk::RelayPoolNotification::Event { event, .. } = notification {
-                    if event.kind == Kind::ContactList && event.pubkey == keys.public_key() {
-                        for tag in event.tags.iter() { if let Some(nostr::TagStandard::PublicKey { public_key, .. }) = tag.as_standardized() { followed_pubkeys.insert(*public_key); } }
-                        received_nip02 = true;
-                        break;
-                    }
-                }
-            }
-        } => {},
-    }
-    client.unsubscribe(&nip02_filter_id).await;
-
-    if received_nip02 {
-        cache_db.write_cache(DB_FOLLOWED, &pubkey_hex, &followed_pubkeys)?;
-    }
-
-    let timeline_posts = fetch_timeline_events(client, relay_config.aggregator.clone()).await?;
-    cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
-
-    let (profile_metadata, profile_json_string) =
-        fetch_nip01_profile(client, keys.public_key()).await?;
-    cache_db.write_cache(DB_PROFILES, &pubkey_hex, &profile_metadata)?;
-
-    Ok(FreshData {
-        followed_pubkeys,
-        timeline_posts,
-        profile_metadata,
-        profile_json_string,
-    })
-}
-
 
 pub fn draw_login_view(
     ui: &mut egui::Ui,
@@ -215,6 +152,7 @@ pub fn draw_login_view(
                             app_data.nostr_client = Some(client.clone());
                             app_data.followed_pubkeys = cached_data.followed_pubkeys;
                             app_data.timeline_posts = cached_data.timeline_posts;
+                            app_data.notification_posts = cached_data.notification_posts;
                             app_data.editable_profile = cached_data.profile_metadata;
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
@@ -225,7 +163,7 @@ pub fn draw_login_view(
                             app_data.is_logged_in = true;
                             app_data.is_loading = true;
                         }
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone, &relay_config).await;
+                        let fresh_data_result = refresh_all_data(&client, &keys, &cache_db_clone, &relay_config).await;
                         if let Ok(fresh_data) = fresh_data_result {
                             // Get relay status before updating app_data
                             let relays = client.relays().await;
@@ -240,6 +178,7 @@ pub fn draw_login_view(
                             let mut app_data = app_data_for_login_logic.lock().unwrap();
                             app_data.followed_pubkeys = fresh_data.followed_pubkeys;
                             app_data.timeline_posts = fresh_data.timeline_posts;
+                            app_data.notification_posts = fresh_data.notification_posts;
                             app_data.connected_relays_display = status_log;
 
                             let my_emojis: std::collections::HashMap<String, String> = fresh_data.profile_metadata.emojis
@@ -366,7 +305,7 @@ pub fn draw_login_view(
                         }
                         client.connect().await;
 
-                        let fresh_data_result = fetch_fresh_data_from_network(&client, &keys, &cache_db_clone, &relay_config).await;
+                        let fresh_data_result = refresh_all_data(&client, &keys, &cache_db_clone, &relay_config).await;
                         if let Ok(fresh_data) = fresh_data_result {
                             let relays = client.relays().await;
                             let mut status_log =
