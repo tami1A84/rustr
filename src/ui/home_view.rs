@@ -1,7 +1,9 @@
 use eframe::egui;
-use nostr::{nips::nip19::ToBech32, EventBuilder, Kind, Tag};
+use nostr::{nips::nip19::ToBech32, EventBuilder, Kind, Tag, Filter, PublicKey, TagStandard};
 use regex::Regex;
 use std::sync::{Arc, Mutex};
+use std::collections::{HashSet, HashMap};
+
 
 use crate::{
     types::*,
@@ -16,6 +18,87 @@ pub fn draw_home_view(
     app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
     runtime_handle: tokio::runtime::Handle,
 ) {
+    // --- Quote Fetching Logic ---
+    let mut ids_to_fetch = HashSet::new();
+    if let Ok(mut posts_to_fetch) = app_data.posts_to_fetch.lock() {
+        if !posts_to_fetch.is_empty() {
+            ids_to_fetch = posts_to_fetch.clone();
+            posts_to_fetch.clear();
+        }
+    }
+
+    if !ids_to_fetch.is_empty() {
+        if let Some(client) = app_data.nostr_client.as_ref() {
+            let client = client.clone();
+            let app_data_clone = app_data_arc.clone();
+
+            runtime_handle.spawn(async move {
+                let events_filter = Filter::new().ids(ids_to_fetch.clone());
+
+                if let Ok(events) = client.fetch_events(events_filter, std::time::Duration::from_secs(10)).await {
+                    if events.is_empty() {
+                        return;
+                    }
+
+                    let author_pubkeys: HashSet<PublicKey> = events.iter()
+                        .filter(|e| e.kind == Kind::TextNote)
+                        .map(|e| e.pubkey)
+                        .collect();
+
+                    let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+                    if !author_pubkeys.is_empty() {
+                        let metadata_filter = Filter::new().authors(author_pubkeys).kind(Kind::Metadata);
+                        if let Ok(metadata_events) = client.fetch_events(metadata_filter, std::time::Duration::from_secs(5)).await {
+                            for event in metadata_events {
+                                if let Ok(metadata) = serde_json::from_str(&event.content) {
+                                    profiles.insert(event.pubkey, metadata);
+                                }
+                            }
+                        }
+                    }
+
+                    let mut fetched_posts = HashMap::new();
+                    for event in events {
+                        if event.kind == Kind::TextNote {
+                            let author_metadata = profiles.get(&event.pubkey).cloned().unwrap_or_default();
+
+                            let emojis = event
+                                .tags
+                                .iter()
+                                .filter_map(|tag| {
+                                    if let Some(TagStandard::Emoji { shortcode, url }) = tag.as_standardized() {
+                                        Some((shortcode.to_string(), url.to_string()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+
+                            let timeline_post = TimelinePost {
+                                id: event.id,
+                                kind: event.kind,
+                                author_pubkey: event.pubkey,
+                                author_metadata,
+                                content: event.content.clone(),
+                                created_at: event.created_at,
+                                emojis,
+                                tags: event.tags.to_vec(),
+                            };
+                            fetched_posts.insert(event.id, Arc::new(timeline_post));
+                        }
+                    }
+
+                    if !fetched_posts.is_empty() {
+                        let mut data = app_data_clone.lock().unwrap();
+                        data.quoted_posts_cache.extend(fetched_posts);
+                        data.should_repaint = true;
+                    }
+                }
+            });
+        }
+    }
+
+
     let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
     let new_post_window_title_text = "新規投稿";
     let post_input_hint_text = "新しい投稿";
@@ -244,10 +327,13 @@ pub fn draw_home_view(
                                 app_data.show_emoji_picker = !app_data.show_emoji_picker;
                             }
 
-                            let count = app_data.post_input.chars().count();
-                            let counter_string = format!("{}/{}", count, MAX_POST_LENGTH);
+                            let re_nostr = Regex::new(r"nostr:(?:note|nevent)1[a-z0-9]+\s*").unwrap();
+                            let user_text = re_nostr.replace_all(&app_data.post_input, "");
+                            let effective_len = user_text.chars().count();
+
+                            let counter_string = format!("{}/{}", effective_len, MAX_POST_LENGTH);
                             let mut counter_text = egui::RichText::new(counter_string);
-                            if count > MAX_POST_LENGTH {
+                            if effective_len > MAX_POST_LENGTH {
                                 counter_text = counter_text.color(egui::Color32::RED);
                             }
                             ui.label(counter_text);
@@ -267,7 +353,11 @@ pub fn draw_home_view(
                                     app_data.should_repaint = true;
                                     println!("Publishing post...");
 
-                                    if post_content.chars().count() > MAX_POST_LENGTH {
+                                    let re_nostr = Regex::new(r"nostr:(?:note|nevent)1[a-z0-9]+\s*").unwrap();
+                                    let user_text = re_nostr.replace_all(&post_content, "");
+                                    let effective_len = user_text.chars().count();
+
+                                    if effective_len > MAX_POST_LENGTH {
                                         eprintln!("Post is too long (max {MAX_POST_LENGTH} chars)");
                                         app_data.is_loading = false;
                                         app_data.should_repaint = true;
