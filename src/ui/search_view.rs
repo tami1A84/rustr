@@ -16,9 +16,13 @@ pub fn draw_search_view(
 ) {
     let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
     // --- Search bar and button ---
-    ui.horizontal(|ui| {
-        ui.label("検索:");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.vertical_centered(|ui| {
+        ui.horizontal(|ui| {
+            ui.label("検索:");
+            ui.add(
+                egui::TextEdit::singleline(&mut app_data.search_input)
+                    .hint_text("キーワードを入力..."),
+            );
             if ui.button("検索").clicked() {
                 let query = app_data.search_input.clone();
                 if !query.is_empty() {
@@ -42,11 +46,6 @@ pub fn draw_search_view(
                     });
                 }
             }
-            ui.add(
-                egui::TextEdit::singleline(&mut app_data.search_input)
-                    .hint_text("キーワードを入力...")
-                    .desired_width(ui.available_width()),
-            );
         });
     });
 
