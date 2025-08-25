@@ -7,6 +7,21 @@ use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
 use crate::types::{ImageKind, ImageState, NostrPostAppInternal, TimelinePost, AppTheme};
 
+fn find_post_by_id(app_data: &NostrPostAppInternal, event_id: EventId) -> Option<Arc<TimelinePost>> {
+    if let Some(post) = app_data.quoted_posts_cache.get(&event_id) {
+        return Some(post.clone());
+    }
+    if let Some(post) = app_data.timeline_posts.iter().find(|p| p.id == event_id) {
+        return Some(Arc::new(post.clone()));
+    }
+    if let Some(post) = app_data.notification_posts.iter().find(|p| p.id == event_id) {
+        return Some(Arc::new(post.clone()));
+    }
+    if let Some(post) = app_data.search_results.iter().find(|p| p.id == event_id) {
+        return Some(Arc::new(post.clone()));
+    }
+    None
+}
 
 fn render_quoted_post(
     ui: &mut egui::Ui,
@@ -329,13 +344,54 @@ pub fn render_post(
             );
         });
         ui.add_space(5.0);
-        render_post_content(
-            ui,
-            app_data,
-            post,
-            urls_to_load,
-            &app_data.my_emojis.clone(),
-        );
+        if post.kind == Kind::Reaction {
+            let reacted_event_id = post.tags.iter().find_map(|tag| {
+                if let Some(nostr::TagStandard::Event { event_id, .. }) = tag.as_standardized() {
+                    Some(*event_id)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(event_id) = reacted_event_id {
+                if let Some(reacted_post) = find_post_by_id(app_data, event_id) {
+                    ui.vertical(|ui| {
+                        let reaction_emoji = &post.content;
+                        ui.label(format!("あなたの投稿に {} しました", reaction_emoji));
+                        ui.add_space(4.0);
+                        render_quoted_post(ui, app_data, &reacted_post, urls_to_load);
+                    });
+                } else {
+                    if let Ok(mut posts_to_fetch) = app_data.posts_to_fetch.lock() {
+                        if !posts_to_fetch.contains(&event_id) {
+                            posts_to_fetch.insert(event_id);
+                            app_data.should_repaint = true;
+                        }
+                    }
+                    ui.horizontal(|ui|{
+                        ui.spinner();
+                        ui.label("Loading reaction...");
+                    });
+                }
+            } else {
+                // Reaction without 'e' tag, just show content
+                render_post_content(
+                    ui,
+                    app_data,
+                    post,
+                    urls_to_load,
+                    &app_data.my_emojis.clone(),
+                );
+            }
+        } else {
+            render_post_content(
+                ui,
+                app_data,
+                post,
+                urls_to_load,
+                &app_data.my_emojis.clone(),
+            );
+        }
 
         ui.add_space(10.0);
         ui.separator();
