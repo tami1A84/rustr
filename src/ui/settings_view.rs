@@ -1,19 +1,22 @@
+use crate::{
+    cache_db::{DB_FOLLOWED, DB_PROFILES, DB_RELAYS, DB_TIMELINE},
+    save_config,
+    types::{AppTheme, NostrPostAppInternal, RelayConfig, UserBackup, ProfileMetadata, TimelinePost},
+};
 use eframe::egui;
+use nostr::PublicKey;
+use rfd::FileDialog;
+use std::collections::HashSet;
+use std::fs;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
-
-use crate::{
-    nostr_client::switch_relays,
-    save_config,
-    types::{AppTheme, NostrPostAppInternal},
-};
 
 pub fn draw_settings_view(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     app_data: &mut NostrPostAppInternal,
-    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
-    runtime_handle: Handle,
+    _app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
+    _runtime_handle: Handle,
 ) {
     ui.heading("設定");
     ui.add_space(10.0);
@@ -35,80 +38,55 @@ pub fn draw_settings_view(
     ui.separator();
     ui.add_space(20.0);
 
-    // --- リレー設定 ---
-    ui.heading("リレー設定");
+    // --- イベントデータのバックアップ ---
+    ui.heading("イベントデータのバックアップ");
+    ui.add_space(10.0);
+    ui.label("プロフィール、フォローリスト、リレーリスト、タイムライン投稿など、キャッシュされているイベントデータをファイルにバックアップします。");
     ui.add_space(10.0);
 
-    let mut changed = false;
+    if ui.button("イベントバックアップをダウンロード").clicked() {
+        if let Some(keys) = &app_data.my_keys {
+            let pubkey_hex = keys.public_key().to_string();
+            let mut backup = UserBackup::default();
 
-    changed |= draw_relay_category(
-        ui,
-        "個人用リレー",
-        "データをバックアップするためのリレーです。",
-        &mut app_data.relays.self_hosted,
-        &mut app_data.self_hosted_relay_input,
-    );
+            // Fetch data from cache
+            if let Ok(cache) = app_data.cache_db.read_cache::<ProfileMetadata>(DB_PROFILES, &pubkey_hex) {
+                backup.profile = Some(cache.data);
+            }
+            if let Ok(cache) = app_data.cache_db.read_cache::<HashSet<PublicKey>>(DB_FOLLOWED, &pubkey_hex) {
+                backup.followed_pubkeys = Some(cache.data);
+            }
+            if let Ok(cache) = app_data.cache_db.read_cache::<RelayConfig>(DB_RELAYS, &pubkey_hex) {
+                backup.relays = Some(cache.data);
+            }
+            if let Ok(cache) = app_data.cache_db.read_cache::<Vec<TimelinePost>>(DB_TIMELINE, &pubkey_hex) {
+                backup.timeline = Some(cache.data);
+            }
 
-    if changed {
-        save_config(app_data);
-        let app_data_clone = app_data_arc.clone();
-        runtime_handle.spawn(async move {
-            switch_relays(app_data_clone).await;
-        });
-    }
-}
+            match serde_json::to_string_pretty(&backup) {
+                Ok(json_str) => {
+                    let file_path = FileDialog::new()
+                        .set_file_name("nostr-backup.json")
+                        .add_filter("JSON", &["json"])
+                        .save_file();
 
-fn draw_relay_category(
-    ui: &mut egui::Ui,
-    title: &str,
-    description: &str,
-    relays: &mut Vec<String>,
-    relay_input: &mut String,
-) -> bool {
-    let mut changed = false;
-
-    ui.label(egui::RichText::new(title).strong());
-    ui.label(egui::RichText::new(description).small().color(egui::Color32::GRAY));
-    ui.add_space(5.0);
-
-    // 新しいリレーの追加
-    ui.horizontal(|ui| {
-        let response = ui.text_edit_singleline(relay_input);
-        if ui.button("追加").clicked()
-            || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-        {
-            if !relay_input.trim().is_empty() {
-                let new_relay = relay_input.trim().to_string();
-                if !relays.contains(&new_relay) {
-                    relays.push(new_relay);
-                    relay_input.clear();
-                    changed = true;
+                    if let Some(path) = file_path {
+                        if let Err(e) = fs::write(path, json_str) {
+                            eprintln!("Failed to write backup file: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize backup data: {}", e);
                 }
             }
+        } else {
+            // This part should ideally not be reached if the user is logged in.
+            // Maybe show a message to the user.
+            eprintln!("Not logged in, cannot perform backup.");
         }
-    });
-
-    // 現在のリレーリスト
-    let mut relay_to_remove = None;
-    for (i, relay) in relays.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(relay);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("削除").clicked() {
-                    relay_to_remove = Some(i);
-                }
-            });
-        });
     }
-
-    if let Some(i) = relay_to_remove {
-        relays.remove(i);
-        changed = true;
-    }
-
-    changed
 }
-
 
 fn update_theme(theme: AppTheme, ctx: &egui::Context) {
     let visuals = match theme {
