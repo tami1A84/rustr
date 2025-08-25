@@ -119,6 +119,7 @@ pub struct TimelinePost {
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum AppTab {
     Home,
+    Notifications,
     Search,
     Wallet,
     Profile,
@@ -177,6 +178,7 @@ pub struct NostrPostAppInternal {
     pub followed_pubkeys: HashSet<PublicKey>,
     pub followed_pubkeys_display: String,
     pub timeline_posts: Vec<TimelinePost>,
+    pub notification_posts: Vec<TimelinePost>,
     pub should_repaint: bool,
     pub is_loading: bool,
     pub current_tab: AppTab,
