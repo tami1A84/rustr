@@ -230,4 +230,8 @@ pub struct NostrPostAppInternal {
     // Quote
     pub quoted_posts_cache: HashMap<EventId, Arc<TimelinePost>>,
     pub posts_to_fetch: Arc<Mutex<HashSet<EventId>>>,
+
+    // Profile
+    pub profile_posts: Vec<TimelinePost>,
+    pub is_fetching_profile_posts: bool,
 }
