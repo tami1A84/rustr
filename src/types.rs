@@ -229,6 +229,7 @@ pub struct NostrPostAppInternal {
 
     // Quote
     pub quoted_posts_cache: HashMap<EventId, Arc<TimelinePost>>,
+    pub profile_cache: HashMap<PublicKey, ProfileMetadata>,
     pub posts_to_fetch: Arc<Mutex<HashSet<EventId>>>,
 
     // Profile
