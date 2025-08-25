@@ -1,81 +1,206 @@
 use eframe::egui;
-use nostr::nips::nip19::ToBech32;
-use nostr::{EventBuilder, Kind, Tag};
+use nostr::nips::nip19::{ToBech32, FromBech32, Nip19Event};
+use nostr::{EventBuilder, Kind, Tag, EventId, RelayUrl};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Handle;
+use crate::types::{ImageKind, ImageState, NostrPostAppInternal, TimelinePost, AppTheme};
 
-use crate::types::{ImageKind, ImageState, NostrPostAppInternal, TimelinePost};
+
+fn render_quoted_post(
+    ui: &mut egui::Ui,
+    app_data: &NostrPostAppInternal,
+    post: &TimelinePost,
+    urls_to_load: &mut Vec<(String, ImageKind)>,
+) {
+    let (fill_color, stroke_color) = match app_data.current_theme {
+        AppTheme::Light => (egui::Color32::from_gray(240), egui::Color32::from_gray(220)),
+        AppTheme::Dark => (egui::Color32::from_rgb(30, 30, 32), egui::Color32::from_rgb(60, 60, 62)),
+    };
+
+    let card_frame = egui::Frame {
+        inner_margin: egui::Margin::same(8),
+        corner_radius: 6.0.into(),
+        shadow: eframe::epaint::Shadow::NONE,
+        fill: fill_color,
+        stroke: egui::Stroke::new(1.0, stroke_color),
+        ..Default::default()
+    };
+
+    ui.group(|ui| {
+        card_frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let avatar_size = egui::vec2(24.0, 24.0);
+                let corner_radius = 3.0;
+                let url = &post.author_metadata.picture;
+
+                if !url.is_empty() {
+                    let url_key = url.to_string();
+                     match app_data.image_cache.get(&url_key) {
+                        Some(ImageState::Loaded(texture_handle)) => {
+                            let image_widget = egui::Image::new(texture_handle)
+                                .corner_radius(corner_radius)
+                                .fit_to_exact_size(avatar_size);
+                            ui.add(image_widget);
+                        }
+                        Some(ImageState::Loading) => {
+                             let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                            ui.put(rect, egui::Spinner::new());
+                        }
+                        Some(ImageState::Failed) => {
+                            let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                            ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.error_fg_color.linear_multiply(0.2));
+                        }
+                        None => {
+                            if !urls_to_load.iter().any(|(u, _)| u == &url_key) {
+                                urls_to_load.push((url_key.clone(), ImageKind::Avatar));
+                            }
+                            let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                            ui.put(rect, egui::Spinner::new());
+                        }
+                    }
+                } else {
+                    let (rect, _) = ui.allocate_exact_size(avatar_size, egui::Sense::hover());
+                    ui.painter().rect_filled(rect, corner_radius, ui.style().visuals.widgets.inactive.bg_fill);
+                }
+                ui.add_space(4.0);
+
+                let display_name = if !post.author_metadata.name.is_empty() {
+                    post.author_metadata.name.clone()
+                } else {
+                    let pubkey = post.author_pubkey.to_bech32().unwrap_or_default();
+                    format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len() - 4..])
+                };
+                ui.label(egui::RichText::new(display_name).strong().small().color(app_data.current_theme.text_color()));
+
+                let created_at_datetime =
+                    chrono::DateTime::from_timestamp(post.created_at.as_u64() as i64, 0).unwrap();
+                let local_datetime = created_at_datetime.with_timezone(&chrono::Local);
+                ui.label(
+                    egui::RichText::new(local_datetime.format("%H:%M").to_string())
+                        .color(egui::Color32::GRAY)
+                        .small(),
+                );
+            });
+
+            ui.add_space(4.0);
+
+            let mut truncated_content = post.content.replace('\n', " ");
+            let max_len = 120;
+            if truncated_content.chars().count() > max_len {
+                truncated_content = truncated_content.chars().take(max_len).collect::<String>() + "...";
+            }
+            ui.label(egui::RichText::new(truncated_content).small().color(app_data.current_theme.text_color()));
+        });
+    });
+}
+
 
 fn render_post_content(
     ui: &mut egui::Ui,
-    app_data: &NostrPostAppInternal,
+    app_data: &mut NostrPostAppInternal,
     post: &TimelinePost,
     urls_to_load: &mut Vec<(String, ImageKind)>,
     my_emojis: &HashMap<String, String>,
 ) {
     let text_color = app_data.current_theme.text_color();
 
-    // Check for music/podcast status
-    let d_tag = post
-        .tags
-        .iter()
-        .find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("d"));
-
-    if let Some(tag) = d_tag {
-        let tag_vec = tag.clone().to_vec();
-        if tag_vec.get(1).map(|s| s.as_str()) == Some("music") {
-            // Music or Podcast status
+    // Music/Podcast status check
+    if let Some(d_tag) = post.tags.iter().find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("d")) {
+        if d_tag.clone().to_vec().get(1).map(|s| s.as_str()) == Some("music") {
             ui.horizontal(|ui| {
-                ui.label("🎵"); // Use a general music icon for now
+                ui.label("🎵");
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new(&post.content).color(text_color));
-                    let r_tag = post
-                        .tags
-                        .iter()
-                        .find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("r"));
-                    if let Some(r_tag_value) = r_tag.and_then(|t| t.clone().to_vec().get(1).cloned())
-                    {
-                        ui.hyperlink_to(
-                            egui::RichText::new(&r_tag_value)
-                                .small()
-                                .color(egui::Color32::GRAY),
-                            r_tag_value,
-                        );
+                    if let Some(r_tag_value) = post.tags.iter().find(|t| (*t).clone().to_vec().get(0).map(|s| s.as_str()) == Some("r")).and_then(|t| t.clone().to_vec().get(1).cloned()) {
+                        ui.hyperlink_to(egui::RichText::new(&r_tag_value).small().color(egui::Color32::GRAY), r_tag_value);
                     }
                 });
             });
-            return; // Don't render general content
+            return;
         }
     }
 
-    // General status (with emojis)
-    let re = Regex::new(r":(\w+):").unwrap();
+    // Refactored logic to handle quotes and text separately
+    let re_nostr = Regex::new(r"nostr:(?:note|nevent)1[a-z0-9]+").unwrap();
     let mut last_end = 0;
 
+    for mat in re_nostr.find_iter(&post.content) {
+        let pre_text = &post.content[last_end..mat.start()];
+        render_text_with_emojis(ui, pre_text, text_color, app_data, post, urls_to_load, my_emojis);
+
+        let bech32_uri = mat.as_str();
+        let event_id = EventId::from_bech32(bech32_uri).ok()
+            .or_else(|| nostr::nips::nip19::Nip19Event::from_bech32(bech32_uri).ok().map(|e| e.event_id));
+
+        if let Some(id) = event_id {
+            if let Some(quoted_post) = app_data.quoted_posts_cache.get(&id) {
+                render_quoted_post(ui, app_data, quoted_post, urls_to_load);
+            } else {
+                if let Ok(mut posts_to_fetch) = app_data.posts_to_fetch.lock() {
+                    if !posts_to_fetch.contains(&id) {
+                        posts_to_fetch.insert(id);
+                        app_data.should_repaint = true;
+                    }
+                }
+                let (_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+                let spinner_frame = egui::Frame {
+                    inner_margin: egui::Margin::same(8),
+                    ..Default::default()
+                };
+                spinner_frame.show(ui, |ui| {
+                    ui.add(egui::Spinner::new());
+                    ui.label("Loading quote...");
+                });
+            }
+        } else {
+             ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(bech32_uri).color(text_color));
+             });
+        }
+
+        last_end = mat.end();
+    }
+
+    let remaining_text = &post.content[last_end..];
+    render_text_with_emojis(ui, remaining_text, text_color, app_data, post, urls_to_load, my_emojis);
+}
+
+fn render_text_with_emojis(
+    ui: &mut egui::Ui,
+    text: &str,
+    text_color: egui::Color32,
+    app_data: &NostrPostAppInternal,
+    post: &TimelinePost,
+    urls_to_load: &mut Vec<(String, ImageKind)>,
+    my_emojis: &HashMap<String, String>,
+) {
+    if text.is_empty() {
+        return;
+    }
+
     ui.horizontal_wrapped(|ui| {
-        for cap in re.captures_iter(&post.content) {
+        let re_emoji = Regex::new(r":(\w+):").unwrap();
+        let mut last_end = 0;
+
+        for cap in re_emoji.captures_iter(text) {
             let full_match = cap.get(0).unwrap();
             let shortcode = cap.get(1).unwrap().as_str();
 
-            let pre_text = &post.content[last_end..full_match.start()];
+            let pre_text = &text[last_end..full_match.start()];
             if !pre_text.is_empty() {
                 ui.label(egui::RichText::new(pre_text).color(text_color));
             }
 
-            let url = post
-                .emojis
-                .get(shortcode)
-                .or_else(|| my_emojis.get(shortcode));
+            let url = post.emojis.get(shortcode).or_else(|| my_emojis.get(shortcode));
             if let Some(url) = url {
                 let emoji_size = egui::vec2(20.0, 20.0);
                 let url_key = url.to_string();
 
                 match app_data.image_cache.get(&url_key) {
                     Some(ImageState::Loaded(texture_handle)) => {
-                        let image_widget =
-                            egui::Image::new(texture_handle).fit_to_exact_size(emoji_size);
+                        let image_widget = egui::Image::new(texture_handle).fit_to_exact_size(emoji_size);
                         ui.add(image_widget);
                     }
                     Some(ImageState::Loading) => {
@@ -84,13 +209,7 @@ fn render_post_content(
                     }
                     Some(ImageState::Failed) => {
                         let (rect, _) = ui.allocate_exact_size(emoji_size, egui::Sense::hover());
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "💔".to_string(),
-                            egui::FontId::default(),
-                            ui.visuals().error_fg_color,
-                        );
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "💔", egui::FontId::default(), ui.visuals().error_fg_color);
                     }
                     None => {
                         if !urls_to_load.iter().any(|(u, _)| u == &url_key) {
@@ -107,7 +226,7 @@ fn render_post_content(
             last_end = full_match.end();
         }
 
-        let remaining_text = &post.content[last_end..];
+        let remaining_text = &text[last_end..];
         if !remaining_text.is_empty() {
             ui.label(egui::RichText::new(remaining_text).color(text_color));
         }
@@ -259,6 +378,31 @@ pub fn render_post(
                         }
                         cloned_app_data_arc.lock().unwrap().should_repaint = true;
                     });
+                }
+            }
+
+            ui.add_space(15.0);
+
+            if ui.button("✏️").on_hover_text("Quote").clicked() {
+                app_data.show_post_dialog = true;
+                app_data.post_input.clear();
+
+                let mut nip19_event = Nip19Event::new(post.id);
+                nip19_event.author = Some(post.author_pubkey);
+                nip19_event.relays = app_data.relays.aggregator.iter().filter_map(|s| RelayUrl::parse(s).ok()).collect();
+
+                if let Ok(nevent) = nip19_event.to_bech32() {
+                    app_data.post_input = format!("nostr:{}\n\n", nevent);
+                } else {
+                    // Fallback to note ID if nevent fails for some reason
+                    match post.id.to_bech32() {
+                        Ok(note_id) => {
+                            app_data.post_input = format!("nostr:{}\n\n", note_id);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create note_id for quote fallback: {}", e);
+                        }
+                    }
                 }
             }
 

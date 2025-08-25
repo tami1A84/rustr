@@ -263,6 +263,8 @@ impl NostrPostApp {
             search_relay_input: String::new(),
             search_input: String::new(),
             search_results: Vec::new(),
+            quoted_posts_cache: HashMap::new(),
+            posts_to_fetch: Arc::new(Mutex::new(HashSet::new())),
         };
         let data = Arc::new(Mutex::new(app_data_internal));
 

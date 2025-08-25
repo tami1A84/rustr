@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use nostr_sdk::Client;
+use std::sync::{Arc, Mutex};
 
 use crate::cache_db::LmdbCache;
 
@@ -225,4 +226,8 @@ pub struct NostrPostAppInternal {
     // Search
     pub search_input: String,
     pub search_results: Vec<TimelinePost>,
+
+    // Quote
+    pub quoted_posts_cache: HashMap<EventId, Arc<TimelinePost>>,
+    pub posts_to_fetch: Arc<Mutex<HashSet<EventId>>>,
 }
