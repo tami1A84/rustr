@@ -211,6 +211,11 @@ pub struct NostrPostAppInternal {
     pub zap_amount_input: String,
     pub zap_target_post: Option<TimelinePost>,
 
+    // Reply
+    pub show_reply_dialog: bool,
+    pub reply_input: String,
+    pub reply_target_post: Option<TimelinePost>,
+
     // Settings
     pub relays: RelayConfig,
     pub aggregator_relay_input: String,
