@@ -36,6 +36,15 @@ pub struct Config {
     pub theme: Option<AppTheme>,
 }
 
+#[derive(Serialize, Deserialize, Default, Debug)]
+pub struct UserBackup {
+    pub profile: Option<ProfileMetadata>,
+    pub followed_pubkeys: Option<HashSet<PublicKey>>,
+    pub relays: Option<RelayConfig>,
+    pub timeline: Option<Vec<TimelinePost>>,
+    // We could add more fields here like notifications, etc.
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Cache<T> {
     pub timestamp: DateTime<Utc>,
