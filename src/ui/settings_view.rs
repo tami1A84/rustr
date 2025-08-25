@@ -39,12 +39,12 @@ pub fn draw_settings_view(
     ui.add_space(20.0);
 
     // --- イベントデータのバックアップ ---
-    ui.heading("イベントデータのバックアップ");
+    ui.heading("データのバックアップ");
     ui.add_space(10.0);
-    ui.label("プロフィール、フォローリスト、リレーリスト、タイムライン投稿など、キャッシュされているイベントデータをファイルにバックアップします。");
+    ui.label("公開データをファイルにバックアップします。");
     ui.add_space(10.0);
 
-    if ui.button("イベントバックアップをダウンロード").clicked() {
+    if ui.button("バックアップをダウンロード").clicked() {
         if let Some(keys) = &app_data.my_keys {
             let pubkey_hex = keys.public_key().to_string();
             let mut backup = UserBackup::default();
