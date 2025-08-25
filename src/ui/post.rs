@@ -383,7 +383,61 @@ pub fn render_post(
                     &app_data.my_emojis.clone(),
                 );
             }
-        } else {
+        } else if post.kind == Kind::TextNote {
+            let event_tag_id = post.tags.iter().find_map(|tag| {
+                if let Some(nostr::TagStandard::Event { event_id, .. }) = tag.as_standardized() {
+                    Some(*event_id)
+                } else {
+                    None
+                }
+            });
+
+            // Check if the content contains a nostr: link (quote)
+            let re_nostr = Regex::new(r"nostr:(?:note|nevent)1[a-z0-9]+").unwrap();
+            let is_quote_in_content = re_nostr.is_match(&post.content);
+
+            if let Some(event_id) = event_tag_id {
+                if is_quote_in_content {
+                    // This is a quote post, render_post_content will handle the preview.
+                    render_post_content(ui, app_data, post, urls_to_load, &app_data.my_emojis.clone());
+                } else {
+                    // This is a reply, so show the content and then the replied-to post.
+                    ui.vertical(|ui| {
+                        render_post_content(ui, app_data, post, urls_to_load, &app_data.my_emojis.clone());
+                        ui.add_space(8.0);
+                        let reply_label = egui::RichText::new("に返信しました:")
+                            .color(egui::Color32::GRAY)
+                            .small();
+                        ui.label(reply_label);
+
+                        if let Some(replied_post) = find_post_by_id(app_data, event_id) {
+                            render_quoted_post(ui, app_data, &replied_post, urls_to_load);
+                        } else {
+                            if let Ok(mut posts_to_fetch) = app_data.posts_to_fetch.lock() {
+                                if !posts_to_fetch.contains(&event_id) {
+                                    posts_to_fetch.insert(event_id);
+                                    app_data.should_repaint = true;
+                                }
+                            }
+                            let spinner_frame = egui::Frame {
+                                inner_margin: egui::Margin::same(8),
+                                ..Default::default()
+                            };
+                            spinner_frame.show(ui, |ui| {
+                                ui.horizontal(|ui|{
+                                    ui.add(egui::Spinner::new());
+                                    ui.label("返信を読み込み中...");
+                                });
+                            });
+                        }
+                    });
+                }
+            } else {
+                // Not a reply or quote, just a regular text note.
+                render_post_content(ui, app_data, post, urls_to_load, &app_data.my_emojis.clone());
+            }
+        }
+        else {
             render_post_content(
                 ui,
                 app_data,
