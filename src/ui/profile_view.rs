@@ -1,7 +1,7 @@
 use eframe::egui::{self, Sense};
 use std::sync::{Arc, Mutex};
 
-use nostr::{EventBuilder, Kind, nips::nip19::ToBech32};
+use nostr::{EventBuilder, Kind};
 
 use crate::{
     cache_db::DB_PROFILES,
@@ -19,7 +19,6 @@ pub fn draw_profile_view(
     let mut urls_to_load: Vec<(String, ImageKind)> = Vec::new();
 
     let save_profile_button_text = "プロフィールを保存";
-    let logout_button_text = "ログアウト";
 
     let card_frame = |ui: &egui::Ui| egui::Frame {
         inner_margin: egui::Margin::same(12),
@@ -187,62 +186,6 @@ pub fn draw_profile_view(
             });
 
             ui.add_space(20.0);
-
-            // --- Danger Zone ---
-            let danger_frame = egui::Frame {
-                inner_margin: egui::Margin::same(12),
-                corner_radius: 8.0.into(),
-                shadow: eframe::epaint::Shadow::NONE,
-                fill: app_data.current_theme.danger_zone_background_color(),
-                stroke: egui::Stroke::new(
-                    1.0,
-                    app_data.current_theme.danger_zone_stroke_color(),
-                ),
-                ..Default::default()
-            };
-            danger_frame.show(ui, |ui| {
-                ui.heading("公開鍵とログアウト");
-                ui.add_space(10.0);
-
-                ui.label("あなたの公開鍵 (npub)");
-                let public_key_bech32 = app_data.my_keys.as_ref().map_or("N/A".to_string(), |k| k.public_key().to_bech32().unwrap_or_default());
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut public_key_bech32.clone()).on_hover_text("クリックしてコピー");
-                    if ui.button("コピー").clicked() {
-                        ctx.copy_text(public_key_bech32);
-                    }
-                });
-
-                ui.add_space(20.0);
-                ui.separator();
-                ui.add_space(20.0);
-
-                if ui.button(egui::RichText::new(logout_button_text).color(egui::Color32::RED).strong()).clicked() {
-                    let client_to_shutdown = app_data.nostr_client.take();
-
-                    app_data.is_logged_in = false;
-                    app_data.my_keys = None;
-                    app_data.followed_pubkeys.clear();
-                    app_data.followed_pubkeys_display.clear();
-                    app_data.timeline_posts.clear();
-                    app_data.post_input.clear();
-                    app_data.passphrase_input.clear();
-                    app_data.confirm_passphrase_input.clear();
-                    app_data.secret_key_input.clear();
-                    app_data.current_tab = AppTab::Home;
-                    app_data.nip01_profile_display.clear();
-                    app_data.editable_profile = ProfileMetadata::default();
-                    app_data.profile_fetch_status = "ログインしてください".to_string();
-                    app_data.should_repaint = true;
-                    println!("Logged out.");
-
-                    if let Some(client) = client_to_shutdown {
-                        runtime_handle.spawn(async move {
-                            client.shutdown().await;
-                        });
-                    }
-                }
-            });
         });
 
 
