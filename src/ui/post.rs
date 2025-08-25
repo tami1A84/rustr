@@ -1,7 +1,10 @@
 use eframe::egui;
 use nostr::nips::nip19::ToBech32;
+use nostr::{EventBuilder, Kind, Tag};
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::runtime::Handle;
 
 use crate::types::{ImageKind, ImageState, NostrPostAppInternal, TimelinePost};
 
@@ -116,6 +119,8 @@ pub fn render_post(
     app_data: &mut NostrPostAppInternal,
     post: &TimelinePost,
     urls_to_load: &mut Vec<(String, ImageKind)>,
+    app_data_arc: Arc<Mutex<NostrPostAppInternal>>,
+    runtime_handle: Handle,
 ) {
     let card_frame = egui::Frame {
         inner_margin: egui::Margin::same(12),
@@ -203,19 +208,6 @@ pub fn render_post(
                     .color(egui::Color32::GRAY)
                     .small(),
             );
-
-            if let Some(my_keys) = &app_data.my_keys {
-                if post.author_pubkey != my_keys.public_key() {
-                    // ZAP button
-                    if !post.author_metadata.lud16.is_empty() {
-                        if ui.button("⚡").clicked() {
-                            app_data.zap_target_post = Some(post.clone());
-                            app_data.show_zap_dialog = true;
-                            app_data.zap_amount_input = "21".to_string(); // Default amount
-                        }
-                    }
-                }
-            }
         });
         ui.add_space(5.0);
         render_post_content(
@@ -225,5 +217,100 @@ pub fn render_post(
             urls_to_load,
             &app_data.my_emojis.clone(),
         );
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(5.0);
+
+        ui.horizontal(|ui| {
+            if ui.button("💬").on_hover_text("Reply").clicked() {
+                app_data.show_reply_dialog = true;
+                app_data.reply_target_post = Some(post.clone());
+                app_data.reply_input.clear();
+            }
+
+            ui.add_space(15.0);
+
+            if ui.button("🔁").on_hover_text("Repost").clicked() {
+                if let (Some(client), Some(keys)) =
+                    (app_data.nostr_client.as_ref(), app_data.my_keys.as_ref())
+                {
+                    let client = client.clone();
+                    let keys = keys.clone();
+                    let reposted_event_id = post.id;
+                    let reposted_author_pubkey = post.author_pubkey;
+                    let cloned_app_data_arc = app_data_arc.clone();
+
+                    runtime_handle.spawn(async move {
+                        let tags = vec![
+                            Tag::event(reposted_event_id),
+                            Tag::public_key(reposted_author_pubkey),
+                        ];
+                        let event_result = EventBuilder::new(Kind::Repost, "").tags(tags).sign(&keys).await;
+
+                        match event_result {
+                            Ok(event) => match client.send_event(&event).await {
+                                Ok(event_id) => {
+                                    println!("Repost published with event id: {:?}", event_id);
+                                }
+                                Err(e) => eprintln!("Failed to publish repost: {}", e),
+                            },
+                            Err(e) => eprintln!("Failed to create repost event: {}", e),
+                        }
+                        cloned_app_data_arc.lock().unwrap().should_repaint = true;
+                    });
+                }
+            }
+
+            ui.add_space(15.0);
+
+            if ui.button("❤️").on_hover_text("React").clicked() {
+                if let (Some(client), Some(keys)) =
+                    (app_data.nostr_client.as_ref(), app_data.my_keys.as_ref())
+                {
+                    let client = client.clone();
+                    let keys = keys.clone();
+                    let reacted_event_id = post.id;
+                    let reacted_author_pubkey = post.author_pubkey;
+                    let cloned_app_data_arc = app_data_arc.clone();
+
+                    runtime_handle.spawn(async move {
+                        let tags = vec![
+                            Tag::event(reacted_event_id),
+                            Tag::public_key(reacted_author_pubkey),
+                        ];
+                        let event_result = EventBuilder::new(Kind::Reaction, "+")
+                            .tags(tags)
+                            .sign(&keys)
+                            .await;
+
+                        match event_result {
+                            Ok(event) => match client.send_event(&event).await {
+                                Ok(event_id) => {
+                                    println!("Reaction published with event id: {:?}", event_id);
+                                }
+                                Err(e) => eprintln!("Failed to publish reaction: {}", e),
+                            },
+                            Err(e) => eprintln!("Failed to create reaction event: {}", e),
+                        }
+                        cloned_app_data_arc.lock().unwrap().should_repaint = true;
+                    });
+                }
+            }
+
+            ui.add_space(15.0);
+
+            if let Some(my_keys) = &app_data.my_keys {
+                if post.author_pubkey != my_keys.public_key() {
+                    if !post.author_metadata.lud16.is_empty() {
+                        if ui.button("⚡").on_hover_text("Zap").clicked() {
+                            app_data.zap_target_post = Some(post.clone());
+                            app_data.show_zap_dialog = true;
+                            app_data.zap_amount_input = "21".to_string();
+                        }
+                    }
+                }
+            }
+        });
     });
 }

@@ -72,7 +72,14 @@ pub fn draw_search_view(
                 .show_rows(ui, row_height, num_posts, |ui, row_range| {
                     for i in row_range {
                         if let Some(post_data) = app_data.search_results.get(i).cloned() {
-                            post::render_post(ui, app_data, &post_data, &mut urls_to_load);
+                            post::render_post(
+                                ui,
+                                app_data,
+                                &post_data,
+                                &mut urls_to_load,
+                                app_data_arc.clone(),
+                                runtime_handle.clone(),
+                            );
                             ui.add_space(5.0);
                         }
                     }

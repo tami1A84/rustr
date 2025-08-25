@@ -120,6 +120,112 @@ pub fn draw_home_view(
     }
 
 
+    // --- Reply Dialog ---
+    if app_data.show_reply_dialog {
+        if let Some(post_to_reply) = app_data.reply_target_post.clone() {
+            let mut close_dialog = false;
+            let author_name = if !post_to_reply.author_metadata.name.is_empty() {
+                post_to_reply.author_metadata.name.clone()
+            } else {
+                let pubkey = post_to_reply.author_pubkey.to_bech32().unwrap_or_default();
+                format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len() - 4..])
+            };
+
+            egui::Window::new(format!("Replying to {}", author_name))
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.add_space(10.0);
+                    ui.label("Original post:");
+                    let original_post_frame = egui::Frame {
+                        inner_margin: egui::Margin::same(10),
+                        corner_radius: 8.0.into(),
+                        shadow: eframe::epaint::Shadow::NONE,
+                        fill: ui.style().visuals.widgets.inactive.bg_fill,
+                        ..Default::default()
+                    };
+                    original_post_frame.show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(post_to_reply.content.clone())
+                                .color(egui::Color32::GRAY)
+                                .italics(),
+                        );
+                    });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut app_data.reply_input)
+                                .desired_rows(3)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Write your reply..."),
+                        );
+                    });
+
+
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            close_dialog = true;
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Publish Reply").clicked() {
+                                if let (Some(client), Some(keys)) = (
+                                    app_data.nostr_client.as_ref(),
+                                    app_data.my_keys.as_ref(),
+                                ) {
+                                    let client = client.clone();
+                                    let keys = keys.clone();
+                                    let reply_content = app_data.reply_input.clone();
+                                    let cloned_app_data_arc = app_data_arc.clone();
+
+                                    runtime_handle.spawn(async move {
+                                        let tags = vec![
+                                            Tag::event(post_to_reply.id),
+                                            Tag::public_key(post_to_reply.author_pubkey),
+                                        ];
+                                        let event_result =
+                                            EventBuilder::new(Kind::TextNote, reply_content)
+                                                .tags(tags)
+                                                .sign(&keys)
+                                                .await;
+
+                                        match event_result {
+                                            Ok(event) => match client.send_event(&event).await {
+                                                Ok(event_id) => {
+                                                    println!("Reply published with event id: {:?}", event_id);
+                                                }
+                                                Err(e) => eprintln!("Failed to publish reply: {}", e),
+                                            },
+                                            Err(e) => eprintln!("Failed to create reply event: {}", e),
+                                        }
+
+                                        let mut data = cloned_app_data_arc.lock().unwrap();
+                                        data.should_repaint = true;
+                                    });
+
+                                    close_dialog = true;
+                                }
+                            }
+                        });
+                    });
+                });
+
+            if close_dialog {
+                app_data.show_reply_dialog = false;
+                app_data.reply_target_post = None;
+                app_data.reply_input.clear();
+            }
+        }
+    }
+
+
     if app_data.show_post_dialog {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, "dim_layer".into()));
         let screen_rect = ctx.screen_rect();
@@ -364,7 +470,14 @@ pub fn draw_home_view(
                     .show_rows(ui, row_height, num_posts, |ui, row_range| {
                         for i in row_range {
                             let post_data = app_data.timeline_posts[i].clone();
-                            post::render_post(ui, app_data, &post_data, &mut urls_to_load);
+                            post::render_post(
+                                ui,
+                                app_data,
+                                &post_data,
+                                &mut urls_to_load,
+                                app_data_arc.clone(),
+                                runtime_handle.clone(),
+                            );
                             ui.add_space(5.0);
                         }
                     });
