@@ -43,30 +43,10 @@ pub fn draw_settings_view(
 
     changed |= draw_relay_category(
         ui,
-        "アグリゲーターリレー",
-        "タイムラインの取得元となるリレーです。",
-        &mut app_data.relays.aggregator,
-        &mut app_data.aggregator_relay_input,
-    );
-
-    ui.add_space(15.0);
-
-    changed |= draw_relay_category(
-        ui,
-        "セルフホストリレー",
-        "投稿の送信先となる、自分用のリレーです。",
+        "個人用リレー",
+        "データをバックアップするためのリレーです。",
         &mut app_data.relays.self_hosted,
         &mut app_data.self_hosted_relay_input,
-    );
-
-    ui.add_space(15.0);
-
-    changed |= draw_relay_category(
-        ui,
-        "サーチリレー",
-        "検索機能などで使われるリレーです。",
-        &mut app_data.relays.search,
-        &mut app_data.search_relay_input,
     );
 
     if changed {

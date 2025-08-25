@@ -215,12 +215,8 @@ impl NostrPostApp {
             LmdbCache::new(Path::new(DB_PATH)).expect("Failed to initialize LMDB cache");
 
         let mut initial_relays = relay_config;
-        if initial_relays.aggregator.is_empty()
-            && initial_relays.self_hosted.is_empty()
-            && initial_relays.search.is_empty()
-        {
-            initial_relays.aggregator.push("wss://yabu.me".to_string());
-        }
+        initial_relays.aggregator = vec!["wss://yabu.me".to_string()];
+        initial_relays.search = vec!["wss://search.nos.today".to_string()];
 
         let app_data_internal = NostrPostAppInternal {
             nwc_uri_input: String::new(),
