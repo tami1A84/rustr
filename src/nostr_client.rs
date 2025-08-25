@@ -148,7 +148,7 @@ pub async fn fetch_notification_events(
     let notifications_filter = Filter::new()
         .kinds(vec![Kind::TextNote, Kind::Reaction])
         .pubkey(my_pubkey)
-        .limit(40);
+        .limit(20);
 
     println!("Fetching notifications from: {:?}", notification_relays);
     let notification_events = client
