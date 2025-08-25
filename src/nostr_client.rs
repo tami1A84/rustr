@@ -138,6 +138,80 @@ pub async fn fetch_timeline_events(
     Ok(timeline_posts)
 }
 
+pub async fn fetch_notification_events(
+    client: &Client,
+    my_pubkey: PublicKey,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut notification_posts = Vec::new();
+    let notification_relays = vec!["wss://yabu.me".to_string()];
+
+    // Filter for replies (Kind 1) and reactions (Kind 7) that tag the user's pubkey
+    let notifications_filter = Filter::new()
+        .kinds(vec![Kind::TextNote, Kind::Reaction])
+        .pubkey(my_pubkey)
+        .limit(40);
+
+    println!("Fetching notifications from: {:?}", notification_relays);
+    let notification_events = client
+        .fetch_events_from(
+            notification_relays,
+            notifications_filter,
+            Duration::from_secs(10),
+        )
+        .await?;
+
+    if !notification_events.is_empty() {
+        let author_pubkeys: HashSet<PublicKey> =
+            notification_events.iter().map(|e| e.pubkey).collect();
+
+        if !author_pubkeys.is_empty() {
+            let metadata_filter = Filter::new()
+                .authors(author_pubkeys.into_iter())
+                .kind(Kind::Metadata);
+
+            let metadata_events = client
+                .fetch_events(metadata_filter, Duration::from_secs(5))
+                .await?;
+            let mut profiles: HashMap<PublicKey, ProfileMetadata> = HashMap::new();
+            for event in metadata_events {
+                if let Ok(metadata) = serde_json::from_str::<ProfileMetadata>(&event.content) {
+                    profiles.insert(event.pubkey, metadata);
+                }
+            }
+
+            for event in notification_events {
+                let emojis = event
+                    .tags
+                    .iter()
+                    .filter_map(|tag| {
+                        if let Some(nostr::TagStandard::Emoji { shortcode, url }) =
+                            tag.as_standardized()
+                        {
+                            Some((shortcode.to_string(), url.to_string()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                notification_posts.push(TimelinePost {
+                    id: event.id,
+                    kind: event.kind,
+                    author_pubkey: event.pubkey,
+                    author_metadata: profiles.get(&event.pubkey).cloned().unwrap_or_default(),
+                    content: event.content.clone(),
+                    created_at: event.created_at,
+                    emojis,
+                    tags: event.tags.to_vec(),
+                });
+            }
+            notification_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+        }
+    }
+
+    Ok(notification_posts)
+}
+
 pub async fn search_events(
     search_relays: Vec<String>,
     query: String,

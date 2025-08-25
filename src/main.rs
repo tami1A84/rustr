@@ -238,6 +238,7 @@ impl NostrPostApp {
             followed_pubkeys: HashSet::new(),
             followed_pubkeys_display: String::new(),
             timeline_posts: Vec::new(),
+            notification_posts: Vec::new(),
             should_repaint: false,
             is_loading: false,
             current_tab: AppTab::Home,

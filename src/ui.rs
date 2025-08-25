@@ -1,4 +1,5 @@
 pub mod home_view;
+pub mod notifications_view;
 pub mod image_cache;
 pub mod login_view;
 pub mod post;
@@ -21,6 +22,7 @@ impl eframe::App for NostrPostApp {
         let mut app_data = self.data.lock().unwrap();
 
         let home_tab_text = "ホーム";
+        let notifications_tab_text = "通知";
         let search_tab_text = "検索";
         let wallet_tab_text = "ウォレット";
         let profile_tab_text = "プロフィール";
@@ -65,6 +67,11 @@ impl eframe::App for NostrPostApp {
 
                     ui.selectable_value(&mut app_data.current_tab, AppTab::Home, home_tab_text);
                     if app_data.is_logged_in {
+                        ui.selectable_value(
+                            &mut app_data.current_tab,
+                            AppTab::Notifications,
+                            notifications_tab_text,
+                        );
                         ui.selectable_value(
                             &mut app_data.current_tab,
                             AppTab::Search,
@@ -116,6 +123,9 @@ impl eframe::App for NostrPostApp {
                     match app_data.current_tab {
                         AppTab::Home => {
                             home_view::draw_home_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
+                        },
+                        AppTab::Notifications => {
+                            notifications_view::draw_notifications_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
                         },
                         AppTab::Search => {
                             search_view::draw_search_view(ui, ctx, &mut app_data, app_data_arc_clone, runtime_handle);
