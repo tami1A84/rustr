@@ -1,6 +1,7 @@
 pub mod home_view;
 pub mod notifications_view;
 pub mod image_cache;
+pub mod events;
 pub mod login_view;
 pub mod post;
 pub mod profile_view;
