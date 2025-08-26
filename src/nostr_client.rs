@@ -3,13 +3,18 @@ use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use crate::types::{ProfileMetadata, TimelinePost};
+use crate::{
+    cache_db::{LmdbCache, DB_PROFILES},
+    types::{ProfileMetadata, TimelinePost},
+};
 
 // NIP-01 プロファイルメタデータを取得する関数
 pub async fn fetch_nip01_profile(
     client: &Client,
     public_key: PublicKey,
+    cache_db: &LmdbCache,
 ) -> Result<(ProfileMetadata, String), Box<dyn std::error::Error + Send + Sync>> {
+    let pubkey_hex = public_key.to_hex();
     let nip01_filter = Filter::new()
         .authors(vec![public_key])
         .kind(Kind::Metadata)
@@ -22,7 +27,7 @@ pub async fn fetch_nip01_profile(
     let mut received_nip01 = false;
 
     tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(20)) => {
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {
             eprintln!("NIP-01 profile fetch timed out.");
         }
         _ = async {
@@ -44,9 +49,18 @@ pub async fn fetch_nip01_profile(
         let profile_metadata: ProfileMetadata = serde_json::from_str(&profile_json_string)?;
         Ok((profile_metadata, profile_json_string))
     } else {
+        // If fetch fails, try to load from cache
+        if let Ok(cached_cache) = cache_db.read_cache::<ProfileMetadata>(DB_PROFILES, &pubkey_hex) {
+            println!("Using cached profile for {}", pubkey_hex);
+            let cached_metadata = cached_cache.data;
+            let cached_json = serde_json::to_string_pretty(&cached_metadata)?;
+            return Ok((cached_metadata, cached_json));
+        }
+
+        // If not in cache, return default
         let default_metadata = ProfileMetadata::default();
         let default_json = serde_json::to_string_pretty(&default_metadata)?;
-        Ok((default_metadata, default_json)) // プロファイルが見つからなかった場合はデフォルト値を返す
+        Ok((default_metadata, default_json))
     }
 }
 
@@ -268,4 +282,54 @@ pub async fn search_events(
     Ok(timeline_posts)
 }
 
+pub async fn fetch_posts_by_author(
+    client: &Client,
+    author_pubkey: PublicKey,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut timeline_posts = Vec::new();
+
+    let timeline_filter = Filter::new()
+        .author(author_pubkey)
+        .kind(Kind::TextNote)
+        .limit(20);
+
+    println!("Fetching posts for author: {}", author_pubkey.to_hex());
+    let note_events = client
+        .fetch_events(timeline_filter, Duration::from_secs(10))
+        .await?;
+
+    if !note_events.is_empty() {
+        // Since we are fetching for a single author, we can fetch their metadata once.
+        let metadata = get_profile_metadata(author_pubkey, client).await.unwrap_or_default();
+
+        for event in note_events {
+            let emojis = event
+                .tags
+                .iter()
+                .filter_map(|tag| {
+                    if let Some(nostr::TagStandard::Emoji { shortcode, url }) =
+                        tag.as_standardized()
+                    {
+                        Some((shortcode.to_string(), url.to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            timeline_posts.push(TimelinePost {
+                id: event.id,
+                kind: event.kind,
+                author_pubkey: event.pubkey,
+                author_metadata: metadata.clone(),
+                content: event.content.clone(),
+                created_at: event.created_at,
+                emojis,
+                tags: event.tags.to_vec(),
+            });
+        }
+        timeline_posts.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+    }
+    Ok(timeline_posts)
+}
 
