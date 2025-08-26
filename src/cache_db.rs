@@ -14,6 +14,7 @@ pub const DB_RELAYS: &str = "nip65_relays";
 pub const DB_TIMELINE: &str = "timeline_posts";
 pub const DB_NOTIFICATIONS: &str = "notification_posts";
 pub const DB_IMAGES: &str = "images";
+pub const DB_SELF_POSTS: &str = "self_posts";
 
 #[derive(Clone)]
 pub struct LmdbCache {
@@ -25,7 +26,7 @@ impl LmdbCache {
         std::fs::create_dir_all(path)?;
         let mut options = heed::EnvOpenOptions::new();
         options.map_size(1024 * 1024 * 1024); // 1 GB
-        options.max_dbs(8);
+        options.max_dbs(9);
         let env = unsafe { options.open(path)? };
 
         let mut txn = env.write_txn()?;
@@ -35,6 +36,7 @@ impl LmdbCache {
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_TIMELINE))?;
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_NOTIFICATIONS))?;
         let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_IMAGES))?;
+        let _: Database<Str, Bytes> = env.create_database(&mut txn, Some(DB_SELF_POSTS))?;
         txn.commit()?;
 
         Ok(Self { env: Arc::new(env) })

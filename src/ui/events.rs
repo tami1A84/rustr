@@ -5,8 +5,8 @@ use nostr_sdk::{Client, SubscribeAutoCloseOptions};
 
 use crate::{
     types::{ProfileMetadata, RelayConfig, TimelinePost},
-    cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE, DB_NOTIFICATIONS},
-    nostr_client::{fetch_nip01_profile, fetch_timeline_events, fetch_notification_events}
+    cache_db::{LmdbCache, DB_FOLLOWED, DB_PROFILES, DB_TIMELINE, DB_NOTIFICATIONS, DB_SELF_POSTS},
+    nostr_client::{fetch_nip01_profile, fetch_timeline_events, fetch_notification_events, fetch_posts_by_author}
 };
 
 pub struct FreshData {
@@ -68,7 +68,7 @@ pub async fn refresh_all_data(
     let (timeline_result, notification_result, profile_result) = tokio::join!(
         fetch_timeline_events(client, relay_config.aggregator.clone()),
         fetch_notification_events(client, keys.public_key()),
-        fetch_nip01_profile(client, keys.public_key())
+        fetch_nip01_profile(client, keys.public_key(), cache_db)
     );
 
     let timeline_posts = timeline_result?;
@@ -89,4 +89,39 @@ pub async fn refresh_all_data(
         profile_metadata,
         profile_json_string,
     })
+}
+
+pub async fn refresh_timeline(
+    client: &Client,
+    keys: &Keys,
+    cache_db: &LmdbCache,
+    relay_config: &RelayConfig,
+) -> Result<Vec<TimelinePost>, Box<dyn std::error::Error + Send + Sync>> {
+    let pubkey_hex = keys.public_key().to_string();
+
+    println!("Refreshing timeline from network...");
+
+    let timeline_posts = fetch_timeline_events(client, relay_config.aggregator.clone()).await?;
+    cache_db.write_cache(DB_TIMELINE, &pubkey_hex, &timeline_posts)?;
+
+    println!("Finished refreshing timeline.");
+
+    Ok(timeline_posts)
+}
+
+pub async fn fetch_and_cache_self_posts(
+    client: &Client,
+    keys: &Keys,
+    cache_db: &LmdbCache,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let pubkey_hex = keys.public_key().to_string();
+
+    println!("Fetching self posts from network...");
+
+    let self_posts = fetch_posts_by_author(client, keys.public_key()).await?;
+    cache_db.write_cache(DB_SELF_POSTS, &pubkey_hex, &self_posts)?;
+
+    println!("Finished fetching self posts.");
+
+    Ok(())
 }

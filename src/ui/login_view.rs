@@ -164,6 +164,17 @@ pub fn draw_login_view(
                             app_data.is_loading = true;
                         }
                         let fresh_data_result = refresh_all_data(&client, &keys, &cache_db_clone, &relay_config).await;
+
+                        // --- Fetch and cache self posts ---
+                        let client_clone = client.clone();
+                        let keys_clone = keys.clone();
+                        let cache_db_clone_for_self_posts = cache_db_clone.clone();
+                        runtime_handle.clone().spawn(async move {
+                            if let Err(e) = crate::ui::events::fetch_and_cache_self_posts(&client_clone, &keys_clone, &cache_db_clone_for_self_posts).await {
+                                eprintln!("Failed to fetch and cache self posts: {}", e);
+                            }
+                        });
+
                         if let Ok(fresh_data) = fresh_data_result {
                             // Get relay status before updating app_data
                             let relays = client.relays().await;
@@ -306,6 +317,17 @@ pub fn draw_login_view(
                         client.connect().await;
 
                         let fresh_data_result = refresh_all_data(&client, &keys, &cache_db_clone, &relay_config).await;
+
+                        // --- Fetch and cache self posts ---
+                        let client_clone = client.clone();
+                        let keys_clone = keys.clone();
+                        let cache_db_clone_for_self_posts = cache_db_clone.clone();
+                        runtime_handle.clone().spawn(async move {
+                            if let Err(e) = crate::ui::events::fetch_and_cache_self_posts(&client_clone, &keys_clone, &cache_db_clone_for_self_posts).await {
+                                eprintln!("Failed to fetch and cache self posts: {}", e);
+                            }
+                        });
+
                         if let Ok(fresh_data) = fresh_data_result {
                             let relays = client.relays().await;
                             let mut status_log =

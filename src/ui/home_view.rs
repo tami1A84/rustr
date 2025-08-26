@@ -526,16 +526,14 @@ pub fn draw_home_view(
                     app_data.should_repaint = true;
 
                     runtime_handle.spawn(async move {
-                        match events::refresh_all_data(&client, &keys, &cache_db, &relay_config).await {
-                            Ok(fresh_data) => {
+                        match events::refresh_timeline(&client, &keys, &cache_db, &relay_config).await {
+                            Ok(timeline_posts) => {
                                 let mut app_data = cloned_app_data_arc.lock().unwrap();
-                                app_data.timeline_posts = fresh_data.timeline_posts;
-                                app_data.notification_posts = fresh_data.notification_posts;
-                                app_data.editable_profile = fresh_data.profile_metadata;
-                                println!("Refreshed all data from home view.");
+                                app_data.timeline_posts = timeline_posts;
+                                println!("Refreshed timeline from home view.");
                             }
                             Err(e) => {
-                                eprintln!("Failed to refresh data: {}", e);
+                                eprintln!("Failed to refresh timeline: {}", e);
                             }
                         }
                         let mut app_data = cloned_app_data_arc.lock().unwrap();
